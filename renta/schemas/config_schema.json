@@ -1,0 +1,323 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RENTA Configuration Schema",
+  "description": "JSON schema for validating RENTA library configuration",
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "cache_dir": {
+          "type": "string",
+          "description": "Directory for caching downloaded and processed data"
+        },
+        "export_dir": {
+          "type": "string", 
+          "description": "Directory for exported analysis results"
+        },
+        "freshness_threshold_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Hours after which cached data is considered stale"
+        }
+      },
+      "additionalProperties": false
+    },
+    "airbnb": {
+      "type": "object",
+      "properties": {
+        "matching": {
+          "type": "object",
+          "properties": {
+            "radius_km": {
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 5.0,
+              "description": "Search radius in kilometers for matching properties with Airbnb listings"
+            },
+            "min_nights_threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Minimum nights threshold for filtering Airbnb listings"
+            },
+            "min_review_score": {
+              "type": "number",
+              "minimum": 1.0,
+              "maximum": 5.0,
+              "description": "Minimum review score for including Airbnb listings"
+            },
+            "occupancy_thresholds": {
+              "type": "object",
+              "properties": {
+                "high": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Nights per month threshold for high occupancy"
+                },
+                "medium": {
+                  "type": "integer", 
+                  "minimum": 1,
+                  "description": "Nights per month threshold for medium occupancy"
+                }
+              },
+              "required": ["high", "medium"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["radius_km", "min_nights_threshold", "min_review_score", "occupancy_thresholds"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["matching"],
+      "additionalProperties": false
+    },
+    "zonaprop": {
+      "type": "object",
+      "properties": {
+        "scraping": {
+          "type": "object",
+          "properties": {
+            "rate_limit_seconds": {
+              "type": "number",
+              "minimum": 0.1,
+              "description": "Delay between requests to avoid rate limiting"
+            },
+            "max_retries": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Maximum number of retry attempts for failed requests"
+            },
+            "timeout_seconds": {
+              "type": "number",
+              "minimum": 1,
+              "description": "Request timeout in seconds"
+            },
+            "user_agents": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "description": "List of user agent strings for rotation"
+            }
+          },
+          "required": ["rate_limit_seconds", "max_retries", "timeout_seconds", "user_agents"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["scraping"],
+      "additionalProperties": false
+    },
+    "exchange_rates": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["xe.com", "bcra", "manual"],
+          "description": "Exchange rate provider to use"
+        },
+        "cache_ttl_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Cache TTL for exchange rates in hours"
+        },
+        "fallback_rate": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Fallback ARS per USD rate when provider fails"
+        },
+        "manual_rates": {
+          "type": "object",
+          "patternProperties": {
+            "^[A-Z]{3}_[A-Z]{3}$": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "description": "Manual exchange rates in FROM_TO format (e.g., ARS_USD)"
+        }
+      },
+      "required": ["provider", "cache_ttl_hours", "fallback_rate"],
+      "additionalProperties": false
+    },
+    "aws": {
+      "type": "object",
+      "properties": {
+        "region": {
+          "type": "string",
+          "description": "AWS region for Bedrock service"
+        },
+        "bedrock": {
+          "type": "object",
+          "properties": {
+            "model_id": {
+              "type": "string",
+              "description": "Bedrock model identifier"
+            },
+            "max_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8192,
+              "description": "Maximum tokens for AI responses"
+            },
+            "temperature": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0,
+              "description": "Temperature for AI response generation"
+            },
+            "max_retries": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Maximum retry attempts for Bedrock API calls"
+            }
+          },
+          "required": ["model_id", "max_tokens", "temperature", "max_retries"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["region", "bedrock"],
+      "additionalProperties": false
+    },
+    "prompts": {
+      "type": "object",
+      "properties": {
+        "default": {
+          "type": "string",
+          "description": "Path to default prompt template"
+        },
+        "custom": {
+          "type": "object",
+          "patternProperties": {
+            "^[a-zA-Z_][a-zA-Z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "description": "Custom prompt templates by name"
+        }
+      },
+      "required": ["default"],
+      "additionalProperties": false
+    },
+    "logging": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+          "description": "Logging level"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["json", "pretty"],
+          "description": "Log output format"
+        },
+        "handlers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["console", "file", "syslog"]
+          },
+          "description": "Log handlers to use"
+        }
+      },
+      "required": ["level", "format"],
+      "additionalProperties": false
+    },
+    "debug": {
+      "type": "object",
+      "properties": {
+        "keep_intermediates": {
+          "type": "boolean",
+          "description": "Keep intermediate files for debugging"
+        },
+        "keep_partial": {
+          "type": "boolean",
+          "description": "Keep partial files on export failure"
+        },
+        "enable_request_logging": {
+          "type": "boolean",
+          "description": "Log HTTP requests and responses"
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Enable dry-run mode for testing"
+        }
+      },
+      "additionalProperties": false
+    },
+    "security": {
+      "type": "object",
+      "properties": {
+        "enable_pii_scrubbing": {
+          "type": "boolean",
+          "description": "Enable PII scrubbing in logs and debug output"
+        },
+        "pii_replacement": {
+          "type": "string",
+          "description": "Text to replace detected PII with"
+        },
+        "pii_patterns": {
+          "type": "object",
+          "patternProperties": {
+            "^[a-zA-Z_][a-zA-Z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "description": "Custom PII detection patterns (regex)"
+        },
+        "validate_config_on_startup": {
+          "type": "boolean",
+          "description": "Validate configuration security on startup"
+        }
+      },
+      "additionalProperties": false
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum retry attempts for network operations"
+        },
+        "backoff_factor": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Backoff factor for retry delays"
+        },
+        "timeout_seconds": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Default timeout for network requests"
+        },
+        "user_agent": {
+          "type": "string",
+          "description": "Default User-Agent string"
+        },
+        "base_delay": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Base delay for retry logic"
+        },
+        "max_delay": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Maximum delay for retry logic"
+        },
+        "exponential_base": {
+          "type": "number",
+          "minimum": 1.0,
+          "description": "Exponential base for backoff calculation"
+        },
+        "jitter": {
+          "type": "boolean",
+          "description": "Enable jitter in retry delays"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["data", "airbnb", "zonaprop", "exchange_rates", "aws", "prompts", "logging"],
+  "additionalProperties": false
+}

@@ -1,0 +1,100 @@
+# High Volume Configuration for RENTA
+# Optimized for processing large numbers of properties efficiently
+
+# Data storage - high performance storage
+data:
+  cache_dir: "/fast_storage/renta/cache"  # Use SSD storage
+  export_dir: "/fast_storage/renta/exports"
+  freshness_threshold_hours: 168  # Weekly refresh to reduce API calls
+
+# Airbnb matching - optimized for performance
+airbnb:
+  matching:
+    radius_km: 0.25  # Smaller radius for faster processing
+    min_nights_threshold: 7
+    min_review_score: 4.0
+    occupancy_thresholds:
+      high: 14
+      medium: 7
+    max_matches_per_property: 25  # Limit matches for performance
+
+# Zonaprop scraping - batch processing optimized
+zonaprop:
+  scraping:
+    rate_limit_seconds: 3  # Faster rate (use with caution)
+    max_retries: 2  # Fewer retries for speed
+    timeout_seconds: 20  # Shorter timeout
+    user_agents:
+      - "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+# AWS Bedrock - high volume settings
+aws:
+  region: "us-east-1"
+  bedrock:
+    model_id: "us.anthropic.claude-3-5-haiku-20241022-v1:0"  # Faster, cheaper model
+    max_tokens: 512  # Shorter responses for speed
+    temperature: 0.5  # More consistent output
+    max_retries: 2
+    timeout_seconds: 30
+
+# Network settings - high throughput
+network:
+  max_retries: 2
+  timeout_seconds: 20
+  backoff_factor: 0.2  # Faster retry
+  user_agent: "RENTA-HighVolume/1.0.0"
+  connection_pool_size: 20  # More concurrent connections
+
+# Logging - minimal for performance
+logging:
+  level: "WARNING"  # Reduce logging overhead
+  format: "json"
+
+# Debug settings - disabled for performance
+debug:
+  enable_request_logging: false
+  keep_intermediates: false
+  keep_partial: false
+
+# Performance settings - maximized
+performance:
+  batch_size: 2000  # Large batches
+  parallel_processing: true
+  max_workers: 8  # More workers
+  memory_limit_mb: 4096  # Higher memory limit
+  enable_caching: true
+  cache_size_mb: 1024
+
+# Spatial indexing - optimized for large datasets
+spatial:
+  indexing:
+    algorithm: "ball_tree"
+    leaf_size: 50  # Larger leaf size for performance
+    metric: "haversine"
+    enable_parallel: true
+
+# Exchange rates - cached for performance
+exchange_rates:
+  provider: "xe.com"
+  cache_ttl_hours: 168  # Weekly cache
+  fallback_rate: 1000
+
+# Memory management - high volume settings
+memory:
+  chunk_size: 5000  # Process in large chunks
+  gc_frequency: 1000  # Garbage collection frequency
+  max_memory_usage_mb: 8192
+
+# Database settings (if using database storage)
+database:
+  connection_pool_size: 20
+  max_overflow: 30
+  pool_timeout: 30
+  pool_recycle: 3600
+
+# Monitoring - performance focused
+monitoring:
+  enable_metrics: true
+  track_performance: true
+  memory_monitoring: true
+  batch_size_optimization: true

@@ -1,0 +1,46 @@
+user_prompt: |
+  Analiza esta propiedad para inversión inmobiliaria en Buenos Aires:
+
+  **Datos de la Propiedad:**
+  - ID: {{ property_id }}
+  - Título: {{ title }}
+  - Precio: USD {{ "{:,.0f}".format(price_usd) }} (ARS {{ "{:,.0f}".format(price_ars) }})
+  - Dirección: {{ address }}
+  - Superficie: {{ surface_m2 }} m²
+  - Ambientes: {{ rooms }} habitaciones, {{ bathrooms }} baños
+  - Precio por m²: USD {{ "{:.0f}".format(price_per_m2_usd) }}
+  {% if views_per_day > 0 %}- Visualizaciones diarias: {{ views_per_day }}{% endif %}
+
+  {% if has_airbnb_data %}
+  **Datos de Airbnb (Potencial de Alquiler):**
+  - Estado de matching: {{ match_status }}
+  {% if airbnb_avg_price_entire_home %}- Precio promedio depto completo: USD {{ "{:.0f}".format(airbnb_avg_price_entire_home) }}/noche{% endif %}
+  {% if airbnb_avg_price_private_room %}- Precio promedio habitación privada: USD {{ "{:.0f}".format(airbnb_avg_price_private_room) }}/noche{% endif %}
+  - Probabilidad de ocupación: {{ airbnb_occupancy_probability }}
+  {% if airbnb_avg_review_score %}- Puntaje promedio de reseñas: {{ "{:.1f}".format(airbnb_avg_review_score) }}{% endif %}
+  {% if estimated_rental_yield %}- Rendimiento estimado anual: {{ "{:.1f}".format(estimated_rental_yield) }}%{% endif %}
+  {% else %}
+  **Datos de Airbnb:** No se encontraron datos de Airbnb cercanos
+  {% endif %}
+
+  Proporciona un análisis conciso (máximo 200 palabras) que incluya:
+  1. Evaluación del precio y ubicación
+  2. Potencial de inversión y alquiler
+  3. Recomendación (comprar/no comprar/investigar más)
+  4. Factores de riesgo principales
+
+  Responde en español argentino con tono profesional pero accesible.
+
+system_prompt: |
+  Eres un analista inmobiliario experto en Buenos Aires. 
+  Proporciona análisis de inversión concisos y profesionales en español rioplatense. 
+  Enfócate en aspectos financieros, ubicación y potencial de alquiler.
+  
+  Considera estos factores en tu análisis:
+  - Precio por metro cuadrado comparado con el mercado
+  - Ubicación y conectividad del barrio
+  - Potencial de revalorización
+  - Demanda de alquileres en la zona
+  - Riesgos específicos del mercado argentino (inflación, regulaciones)
+  
+  Mantén un tono profesional pero accesible, usando terminología local argentina.

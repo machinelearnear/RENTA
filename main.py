@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """
-End-to-end workflow for scraping Zonaprop listings and analyzing them with Airbnb data.
+End-to-end workflow for scraping Zonaprop listings and analyzing them with Airbnb data using AWS Bedrock.
 Combines the functionality from:
 - 01-inside-airbnb-data.ipynb
 - 02-scrape-zonaprop-listings.ipynb
 - 03-load-data-and-run.ipynb
+
+AWS Bedrock Configuration:
+- Uses Claude Sonnet 4.5 inference profile for cross-region reliability
+- Inference Profile: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+- Regions: us-east-1, us-east-2, us-west-1, us-west-2
 """
 
 import os
@@ -23,10 +28,73 @@ import cloudscraper
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 from sklearn.neighbors import BallTree
-from litellm import completion
+import boto3
+from botocore.config import Config
 
 # Load environment variables
 load_dotenv()
+
+
+# ============================================================================
+# AWS BEDROCK SETUP
+# ============================================================================
+
+def get_bedrock_client(region_name='us-east-1'):
+    """
+    Initialize AWS Bedrock client.
+
+    Credentials can be provided via:
+    1. Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+    2. AWS credentials file: ~/.aws/credentials
+    3. IAM role (if running on EC2/Lambda/ECS)
+    """
+    config = Config(
+        region_name=region_name,
+        retries={'max_attempts': 3, 'mode': 'adaptive'}
+    )
+
+    return boto3.client('bedrock-runtime', config=config)
+
+
+def invoke_bedrock_model(prompt, system_prompt, model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                        max_tokens=1024, temperature=0.7, region='us-east-1'):
+    """
+    Invoke AWS Bedrock model using inference profile for text generation.
+
+    Args:
+        prompt: User prompt
+        system_prompt: System instructions
+        model_id: Bedrock inference profile or model identifier
+        max_tokens: Maximum tokens to generate
+        temperature: Sampling temperature (0-1)
+        region: AWS region
+
+    Returns:
+        Generated text response
+    """
+    client = get_bedrock_client(region)
+
+    # Claude models use Messages API
+    request_body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "system": system_prompt,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    }
+
+    response = client.invoke_model(
+        modelId=model_id,
+        body=json.dumps(request_body)
+    )
+
+    response_body = json.loads(response['body'].read())
+    return response_body['content'][0]['text']
 
 
 # ============================================================================
@@ -138,7 +206,7 @@ def process_airbnb_listings(data_dir='raw_data/airbnb'):
     ars_to_usd['Date'] = pd.to_datetime(ars_to_usd['Date']).dt.date
 
     # Clean price column
-    filtered_listings['price'] = filtered_listings['price'].replace('[\$,]', '', regex=True).astype(float)
+    filtered_listings['price'] = filtered_listings['price'].replace(r'[\$,]', '', regex=True).astype(float)
 
     # Calculate estimated price in USD
     estimated_prices_in_usd = []
@@ -178,8 +246,10 @@ def save_airbnb_data(listings, reviews, output_dir='processed'):
 # ============================================================================
 
 def download_zonaprop_pages(search_url, folder_path='raw_data/zonaprop', overwrite=False):
-    """Download Zonaprop search result pages."""
-    scraper = cloudscraper.create_scraper(delay=30)
+    """Download Zonaprop search result pages using Playwright to bypass Cloudflare."""
+    import time
+    import random
+    from playwright.sync_api import sync_playwright
 
     os.makedirs(folder_path, exist_ok=True)
 
@@ -190,39 +260,131 @@ def download_zonaprop_pages(search_url, folder_path='raw_data/zonaprop', overwri
                 os.unlink(file_path)
         print("Existing files deleted.")
 
-    res = scraper.get(search_url)
-    if res.status_code != 200:
-        print(f'Error: {res.status_code}')
-        return
+    print("Initializing Playwright browser (visible browser)...")
 
-    soup = BeautifulSoup(res.text, 'html.parser')
+    with sync_playwright() as p:
+        # Launch browser with anti-detection settings
+        browser = p.chromium.launch(
+            headless=False,  # Visible browser to avoid Cloudflare detection
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--no-sandbox',
+                '--lang=es-AR',
+                '--window-size=1920,1080'
+            ]
+        )
 
-    total_pages = None
-    for script in soup.find_all('script'):
-        if 'totalPages' in script.text:
-            match = re.search(r'"totalPages":(\d+)', script.text)
-            if match:
-                total_pages = int(match.group(1))
-                break
+        # Create context with realistic user agent and locale
+        context = browser.new_context(
+            viewport={'width': 1920, 'height': 1080},
+            locale='es-AR',
+            timezone_id='America/Argentina/Buenos_Aires',
+            user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
+        )
 
-    if not total_pages:
-        print('Total pages not found.')
-        return
+        page = context.new_page()
 
-    urls = [f"{search_url}-pagina-{i}.html" for i in range(1, total_pages + 1)]
+        try:
+            print(f"Attempting to access: {search_url}")
+            page.goto(search_url, wait_until='networkidle', timeout=60000)
 
-    for index, url in enumerate(tqdm(urls, desc="Downloading Zonaprop pages"), start=1):
-        filename = f'{folder_path}/listings-{index:03}.html'
-        if not os.path.exists(filename):
-            res = scraper.get(url)
-            if res.status_code == 200:
-                soup = BeautifulSoup(res.text, 'html.parser')
-                with open(filename, 'w', encoding='utf-8') as file:
-                    file.write(str(soup))
-            else:
-                print(f'Error getting page {index}: {res.status_code}')
-        else:
-            print(f'File {filename} already exists, skipping download.')
+            # Wait for page to load and Cloudflare challenge to complete
+            print("Waiting for Cloudflare challenge (15 seconds)...")
+            time.sleep(15)
+
+            # Simulate human behavior - scroll down
+            print("Simulating user behavior (scrolling)...")
+            for _ in range(3):
+                page.evaluate("window.scrollBy(0, 500);")
+                time.sleep(random.uniform(1, 2))
+
+            # Scroll back up
+            page.evaluate("window.scrollTo(0, 0);")
+            time.sleep(2)
+
+            # Wait for JavaScript to execute and listings to load
+            print("Waiting for listing data to load...")
+
+            # Wait for __PRELOADED_STATE__ to be available with more attempts
+            max_attempts = 60
+            data_loaded = False
+            for i in range(max_attempts):
+                try:
+                    # Check if window.__PRELOADED_STATE__ exists
+                    has_data = page.evaluate(
+                        "typeof window.__PRELOADED_STATE__ !== 'undefined' && window.__PRELOADED_STATE__.listStore !== undefined"
+                    )
+                    if has_data:
+                        print(f"Listing data loaded successfully after {i+1} attempts")
+                        data_loaded = True
+                        break
+                except:
+                    pass
+                time.sleep(1)
+
+                # Additional scrolling every 10 seconds
+                if i % 10 == 0 and i > 0:
+                    page.evaluate("window.scrollBy(0, 300);")
+
+            if not data_loaded:
+                print("Warning: __PRELOADED_STATE__ not found after 60 attempts")
+                print("Saving page source for debugging...")
+                with open('/tmp/zonaprop_debug.html', 'w', encoding='utf-8') as f:
+                    f.write(page.content())
+                print("Page saved to /tmp/zonaprop_debug.html")
+
+            page_source = page.content()
+            soup = BeautifulSoup(page_source, 'html.parser')
+
+            # Check if we were blocked
+            if "Just a moment" in page_source or "Checking your browser" in page_source:
+                print("Still blocked by Cloudflare. Try running with headless=False for debugging.")
+                browser.close()
+                return
+
+            total_pages = None
+            for script in soup.find_all('script'):
+                if 'totalPages' in script.text:
+                    match = re.search(r'"totalPages":(\d+)', script.text)
+                    if match:
+                        total_pages = int(match.group(1))
+                        break
+
+            if not total_pages:
+                print('Total pages not found in page source.')
+                print(f'Page source preview: {page_source[:500]}')
+                browser.close()
+                return
+
+            print(f"Found {total_pages} pages to download")
+            urls = [f"{search_url}-pagina-{i}.html" for i in range(1, total_pages + 1)]
+
+            for index, url in enumerate(tqdm(urls, desc="Downloading Zonaprop pages"), start=1):
+                filename = f'{folder_path}/listings-{index:03}.html'
+                if not os.path.exists(filename):
+                    # Add random delay between requests (10-20 seconds)
+                    time.sleep(random.uniform(10, 20))
+
+                    page.goto(url, wait_until='networkidle', timeout=60000)
+                    time.sleep(5)  # Wait for page to load
+
+                    page_source = page.content()
+
+                    # Check if blocked
+                    if "Just a moment" not in page_source:
+                        soup = BeautifulSoup(page_source, 'html.parser')
+                        with open(filename, 'w', encoding='utf-8') as file:
+                            file.write(str(soup))
+                    else:
+                        print(f'Cloudflare challenge on page {index}')
+                        time.sleep(10)  # Wait longer and retry
+                else:
+                    print(f'File {filename} already exists, skipping download.')
+
+        finally:
+            browser.close()
+            print("Browser closed.")
 
 
 def extract_property_data(soup):
@@ -300,46 +462,88 @@ def create_dataframe_from_html(folder_path='raw_data/zonaprop'):
 
 
 def extract_user_views(df):
-    """Extract user views from each listing page."""
-    scraper = cloudscraper.create_scraper(delay=30)
+    """Extract user views from each listing page using Playwright."""
+    import time
+    import random
+    from playwright.sync_api import sync_playwright
+
     resultados = []
 
-    for url in tqdm(df['listing_url'], desc="Fetching user views"):
-        res = scraper.get(url)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, 'html.parser')
-            script = soup.find('script', string=re.compile(r'usersViews\s*=\s*\d+|antiquity\s*=\s*\''))
+    with sync_playwright() as p:
+        # Launch headless browser for faster scraping
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--no-sandbox',
+                '--lang=es-AR'
+            ]
+        )
 
-            if script:
-                match_users_views = re.search(r'usersViews\s*=\s*(\d+)', script.string)
-                users_views = int(match_users_views.group(1)) if match_users_views else 0
+        context = browser.new_context(
+            locale='es-AR',
+            timezone_id='America/Argentina/Buenos_Aires',
+            user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
+        )
 
-                match_antiquity = re.search(r"antiquity\s*=\s*'Publicado hace (\d+) días'", script.string)
-                if match_antiquity:
-                    antiquity = int(match_antiquity.group(1))
-                elif 'Publicado hoy' in script.string:
-                    antiquity = 0
-                elif 'Publicado desde ayer' in script.string:
-                    antiquity = 1
-                else:
-                    antiquity = 0
-            else:
-                users_views = 0
-                antiquity = 0
+        page = context.new_page()
 
-            if isinstance(users_views, int) and isinstance(antiquity, int) and antiquity != 0:
-                views_per_day = users_views / antiquity
-            else:
-                views_per_day = 0
+        try:
+            for url in tqdm(df['listing_url'], desc="Fetching user views"):
+                # Add random delay between requests (5-10 seconds)
+                time.sleep(random.uniform(5, 10))
 
-            resultados.append({
-                'listing_url': url,
-                'user_views': users_views,
-                'days': antiquity,
-                'views_per_day': int(views_per_day)
-            })
-        else:
-            print(f'Error loading page: {res.status_code}')
+                try:
+                    page.goto(url, wait_until='networkidle', timeout=30000)
+                    time.sleep(3)  # Wait for page to load
+
+                    page_source = page.content()
+
+                    # Check if blocked
+                    if "Just a moment" in page_source:
+                        print(f'Cloudflare challenge detected, skipping: {url}')
+                        continue
+
+                    soup = BeautifulSoup(page_source, 'html.parser')
+
+                    script = soup.find('script', string=re.compile(r'usersViews\s*=\s*\d+|antiquity\s*=\s*\''))
+
+                    if script:
+                        match_users_views = re.search(r'usersViews\s*=\s*(\d+)', script.string)
+                        users_views = int(match_users_views.group(1)) if match_users_views else 0
+
+                        match_antiquity = re.search(r"antiquity\s*=\s*'Publicado hace (\d+) días'", script.string)
+                        if match_antiquity:
+                            antiquity = int(match_antiquity.group(1))
+                        elif 'Publicado hoy' in script.string:
+                            antiquity = 0
+                        elif 'Publicado desde ayer' in script.string:
+                            antiquity = 1
+                        else:
+                            antiquity = 0
+                    else:
+                        users_views = 0
+                        antiquity = 0
+
+                    if isinstance(users_views, int) and isinstance(antiquity, int) and antiquity != 0:
+                        views_per_day = users_views / antiquity
+                    else:
+                        views_per_day = 0
+
+                    resultados.append({
+                        'listing_url': url,
+                        'user_views': users_views,
+                        'days': antiquity,
+                        'views_per_day': int(views_per_day)
+                    })
+
+                except Exception as e:
+                    print(f'Error processing {url}: {e}')
+                    continue
+
+        finally:
+            browser.close()
 
     return pd.DataFrame(resultados)
 
@@ -454,8 +658,24 @@ def info_del_listing(row):
     return zonaprop, airbnb
 
 
-def llm_response(row, model="together_ai/NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO"):
-    """Get LLM response for listing summary."""
+def llm_response(row, model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0", region='us-east-1'):
+    """
+    Get AWS Bedrock response for listing summary.
+
+    Args:
+        row: Property row data
+        model_id: Bedrock inference profile ID (default: Claude Sonnet 4.5 US profile)
+        region: AWS region for Bedrock client
+
+    Returns:
+        Generated summary text
+
+    Available inference profiles:
+    - us.anthropic.claude-sonnet-4-5-20250929-v1:0 (recommended, latest Sonnet 4.5)
+    - us.anthropic.claude-3-7-sonnet-20250219-v1:0 (Claude 3.7 Sonnet)
+    - us.anthropic.claude-sonnet-4-20250514-v1:0 (Claude Sonnet 4)
+    - us.anthropic.claude-3-5-haiku-20241022-v1:0 (faster, cheaper)
+    """
     system_instructions = """Always follow these instructions:
 - Using the above context only, return a single paragraph summarizing all the information as your output.
 - Write with strong Argentinian accent in Spanish.
@@ -469,31 +689,54 @@ def llm_response(row, model="together_ai/NousResearch/Nous-Hermes-2-Mixtral-8x7B
 
     info = info_del_listing(row)
     prompt = f"Return a dense summary from the given context:\n```Zonaprop:{info[0]}\n----\nAirbnb listings nearby:\n{info[1]}```"
-    messages = [
-        {"role": "system", "content": system_instructions},
-        {"role": "user", "content": prompt},
-    ]
-    chat_completion = completion(
-        messages=messages,
-        model=model,
-        max_tokens=1024
-    )
-    return chat_completion.choices[0].message.content
+
+    try:
+        response = invoke_bedrock_model(
+            prompt=prompt,
+            system_prompt=system_instructions,
+            model_id=model_id,
+            max_tokens=1024,
+            temperature=0.7,
+            region=region
+        )
+        return response
+    except Exception as e:
+        print(f"Error calling Bedrock: {e}")
+        return f"Error generating summary: {str(e)}"
 
 
-def analyze_listings(df, min_views=60, max_views=float('inf'), airbnb_listings=None, radius_km=0.3, show_top=10):
-    """Analyze top listings based on views."""
+def analyze_listings(df, min_views=60, max_views=float('inf'), airbnb_listings=None, radius_km=0.3,
+                     show_top=10, model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0", region='us-east-1'):
+    """
+    Analyze top listings based on views using AWS Bedrock.
+
+    Args:
+        df: Zonaprop listings DataFrame
+        min_views: Minimum views per day filter
+        max_views: Maximum views per day filter
+        airbnb_listings: Airbnb listings DataFrame
+        radius_km: Radius for finding nearby Airbnb listings
+        show_top: Number of top listings to analyze
+        model_id: Bedrock inference profile ID
+        region: AWS region
+
+    Returns:
+        DataFrame with analysis results
+    """
     listings = df[(df.views_per_day > min_views) & (df.views_per_day <= max_views)].reset_index(drop=True)
     listings = listings.head(show_top)
     listings = add_airbnb_info(listings, airbnb_listings, radius_km)
 
     results = []
-    for index, row in tqdm(listings.iterrows(), desc="Calling LLM API", total=len(listings)):
-        summary = llm_response(row)
+    for index, row in tqdm(listings.iterrows(), desc="Calling AWS Bedrock API", total=len(listings)):
+        summary = llm_response(row, model_id=model_id, region=region)
         results.append({
             'listing_url': row['listing_url'],
             'google_maps': row['google_maps'],
             'whatsapp': row['whatsapp'] if pd.notna(row['whatsapp']) else None,
+            'asking_price_in_usd': row['asking_price_in_usd'],
+            'views_per_day': row['views_per_day'],
+            'usd_per_m2': row['usd_per_m2'],
             'summary': summary,
             'photos': row['photos']
         })
@@ -505,10 +748,27 @@ def analyze_listings(df, min_views=60, max_views=float('inf'), airbnb_listings=N
 # MAIN WORKFLOW
 # ============================================================================
 
-def main(search_url, download_airbnb=False, scrape_zonaprop=True, analyze=True):
-    """Main workflow."""
+def main(search_url, download_airbnb=False, scrape_zonaprop=True, analyze=True,
+         bedrock_model="us.anthropic.claude-sonnet-4-5-20250929-v1:0", aws_region='us-east-1'):
+    """
+    Main workflow using AWS Bedrock.
+
+    Args:
+        search_url: Zonaprop search URL with filters
+        download_airbnb: Download fresh Airbnb data (slow, ~15 min)
+        scrape_zonaprop: Scrape fresh Zonaprop listings
+        analyze: Run LLM analysis with Bedrock
+        bedrock_model: AWS Bedrock inference profile ID
+        aws_region: AWS region for Bedrock client
+
+    Available inference profiles:
+        - us.anthropic.claude-sonnet-4-5-20250929-v1:0 (recommended, Claude Sonnet 4.5)
+        - us.anthropic.claude-3-7-sonnet-20250219-v1:0 (Claude 3.7 Sonnet)
+        - us.anthropic.claude-sonnet-4-20250514-v1:0 (Claude Sonnet 4)
+        - us.anthropic.claude-3-5-haiku-20241022-v1:0 (faster, cheaper)
+    """
     print("=" * 80)
-    print("ENCUENTRA TU CASA - End-to-End Workflow")
+    print("ENCUENTRA TU CASA - End-to-End Workflow (AWS Bedrock)")
     print("=" * 80)
 
     # Step 1: Process Airbnb data (if needed)
@@ -537,12 +797,17 @@ def main(search_url, download_airbnb=False, scrape_zonaprop=True, analyze=True):
         zonaprop_listings = create_dataframe_from_html()
         print(f"Extracted {len(zonaprop_listings)} properties")
 
-        print("\n[STEP 2b] Fetching user views data...")
-        listings_user_views = extract_user_views(zonaprop_listings)
-        zonaprop_listings = merge_and_recalculate(zonaprop_listings, listings_user_views)
+        # Only fetch user views if we have properties
+        if len(zonaprop_listings) > 0 and 'listing_url' in zonaprop_listings.columns:
+            print("\n[STEP 2b] Fetching user views data...")
+            listings_user_views = extract_user_views(zonaprop_listings)
+            zonaprop_listings = merge_and_recalculate(zonaprop_listings, listings_user_views)
 
-        folder_path = create_directory(search_url, delete=True)
-        save_zonaprop_data(zonaprop_listings, folder_path)
+            folder_path = create_directory(search_url, delete=True)
+            save_zonaprop_data(zonaprop_listings, folder_path)
+        else:
+            print("\n[WARNING] No properties extracted. Skipping user views and data save.")
+            print("This usually means Cloudflare blocked the request. Try again later or adjust scraping parameters.")
     else:
         print("\n[STEP 2] Skipping Zonaprop scraping...")
         # Load existing data
@@ -557,15 +822,31 @@ def main(search_url, download_airbnb=False, scrape_zonaprop=True, analyze=True):
                 print("ERROR: No Zonaprop data found.")
                 return
 
-    # Step 3: Analysis
+    # Step 3: Analysis with AWS Bedrock
     if analyze and zonaprop_listings is not None and airbnb_listings is not None:
-        print("\n[STEP 3] Analyzing top listings...")
-        results = analyze_listings(zonaprop_listings, min_views=60, airbnb_listings=airbnb_listings, show_top=10)
+        print(f"\n[STEP 3] Analyzing top listings with AWS Bedrock ({bedrock_model})...")
+        results = analyze_listings(
+            zonaprop_listings,
+            min_views=60,
+            airbnb_listings=airbnb_listings,
+            show_top=10,
+            model_id=bedrock_model,
+            region=aws_region
+        )
 
         output_file = f'processed/analysis_results_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
         results.to_csv(output_file, index=False)
         print(f"\nAnalysis complete! Results saved to: {output_file}")
         print(f"Found {len(results)} high-interest properties")
+
+        # Print summary
+        print("\n" + "=" * 80)
+        print("SUMMARY OF TOP PROPERTIES")
+        print("=" * 80)
+        for idx, row in results.iterrows():
+            print(f"\n[{idx+1}] ${row['asking_price_in_usd']:,.0f} USD | {row['views_per_day']} views/day | ${row['usd_per_m2']:.0f}/m²")
+            print(f"Summary: {row['summary'][:150]}...")
+            print(f"URL: {row['listing_url']}")
 
     print("\n" + "=" * 80)
     print("Workflow complete!")
@@ -573,14 +854,53 @@ def main(search_url, download_airbnb=False, scrape_zonaprop=True, analyze=True):
 
 
 if __name__ == "__main__":
+    """
+    SETUP INSTRUCTIONS:
+
+    1. Install dependencies:
+       pip install boto3 pandas numpy scikit-learn beautifulsoup4 cloudscraper python-dotenv tqdm requests lxml html5lib
+
+    2. Configure AWS credentials (choose one method):
+
+       Method A - Environment variables:
+       export AWS_ACCESS_KEY_ID="your_access_key"
+       export AWS_SECRET_ACCESS_KEY="your_secret_key"
+       export AWS_REGION="us-east-1"
+
+       Method B - AWS credentials file (~/.aws/credentials):
+       [default]
+       aws_access_key_id = your_access_key
+       aws_secret_access_key = your_secret_key
+       region = us-east-1
+
+       Method C - IAM Role (if running on AWS EC2/Lambda/ECS)
+       No configuration needed - uses instance role automatically
+
+    3. Enable Bedrock model access:
+       - Go to AWS Console > Amazon Bedrock > Model access
+       - Request access to Claude Sonnet 4.5 (or other Anthropic models)
+       - Wait for approval (usually instant for Claude models)
+
+    4. Run the script:
+       python main.py
+    """
+
     # Example usage
     SEARCH_URL = "https://www.zonaprop.com.ar/inmuebles-venta-barrio-norte-palermo-colegiales-villa-crespo-publicado-hace-menos-de-45-dias-50000-130000-dolar-orden-visitas-descendente.html"
 
+    # Available inference profiles (check your Bedrock access):
+    # - us.anthropic.claude-sonnet-4-5-20250929-v1:0  (recommended, latest Claude Sonnet 4.5)
+    # - us.anthropic.claude-3-7-sonnet-20250219-v1:0  (Claude 3.7 Sonnet)
+    # - us.anthropic.claude-sonnet-4-20250514-v1:0    (Claude Sonnet 4)
+    # - us.anthropic.claude-3-5-haiku-20241022-v1:0   (faster, cheaper)
+
     # Run the workflow
-    # Set download_airbnb=True on first run to download Airbnb data
+    # Set download_airbnb=True on first run to download Airbnb data (~15 minutes)
     main(
         search_url=SEARCH_URL,
-        download_airbnb=False,  # Set to True on first run
-        scrape_zonaprop=True,
-        analyze=True
+        download_airbnb=False,       # Airbnb data already downloaded
+        scrape_zonaprop=True,        # Scrape Zonaprop listings
+        analyze=False,               # Skip analysis for now
+        bedrock_model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",  # Claude Sonnet 4.5 inference profile
+        aws_region='us-east-1'       # AWS region
     )

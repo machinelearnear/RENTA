@@ -1,0 +1,80 @@
+# Development Configuration for RENTA
+# Optimized for development and testing
+
+# Data storage - use local directories for development
+data:
+  cache_dir: "./dev_cache"
+  export_dir: "./dev_exports"
+  freshness_threshold_hours: 1  # Refresh data more frequently
+
+# Airbnb matching - more permissive for testing
+airbnb:
+  matching:
+    radius_km: 0.5  # Larger radius to find more matches
+    min_nights_threshold: 1  # Include short-term rentals
+    min_review_score: 3.0  # Lower threshold for testing
+    occupancy_thresholds:
+      high: 10
+      medium: 5
+    max_matches_per_property: 100  # More matches for analysis
+
+# Zonaprop scraping - conservative for development
+zonaprop:
+  scraping:
+    rate_limit_seconds: 10  # Slower to avoid blocking
+    max_retries: 2
+    timeout_seconds: 45
+    user_agents:
+      - "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+# AWS Bedrock - development settings
+aws:
+  region: "us-east-1"
+  bedrock:
+    model_id: "us.anthropic.claude-3-5-haiku-20241022-v1:0"  # Cheaper model for dev
+    max_tokens: 512  # Shorter responses
+    temperature: 0.8  # More creative for testing
+    max_retries: 2
+    timeout_seconds: 30
+    dry_run: false  # Set to true to avoid API calls
+
+# Prompts - development templates
+prompts:
+  default: "prompts/investment_summary.yaml"
+  custom_templates:
+    dev_test: |
+      Analizá brevemente esta propiedad:
+      Precio: USD {{ property.price_usd }}
+      Superficie: {{ property.surface_m2 }} m²
+      
+      Respuesta en máximo 50 palabras.
+
+# Network settings - more tolerant
+network:
+  max_retries: 2
+  timeout_seconds: 30
+  backoff_factor: 0.5
+  user_agent: "RENTA-Dev/1.0.0"
+
+# Logging - verbose for development
+logging:
+  level: "DEBUG"
+  format: "console"  # Human-readable format
+
+# Debug settings - enabled for development
+debug:
+  enable_request_logging: true
+  keep_intermediates: true
+  keep_partial: true
+  
+# Performance settings - optimized for development
+performance:
+  batch_size: 50  # Smaller batches
+  parallel_processing: false  # Disable for easier debugging
+  max_workers: 1
+
+# Exchange rates - development settings
+exchange_rates:
+  provider: "xe.com"
+  cache_ttl_hours: 1  # Refresh more frequently
+  fallback_rate: 1000  # ARS per USD

@@ -1,0 +1,69 @@
+# Default configuration for RENTA library
+# This configuration provides sensible defaults for all components
+
+data:
+  cache_dir: "~/.renta/cache"
+  export_dir: "~/.renta/exports"
+  freshness_threshold_hours: 24
+
+airbnb:
+  matching:
+    radius_km: 0.3
+    min_nights_threshold: 7
+    min_review_score: 4.0
+    occupancy_thresholds:
+      high: 14  # nights per month
+      medium: 7
+
+zonaprop:
+  scraping:
+    rate_limit_seconds: 5.0
+    max_retries: 3
+    timeout_seconds: 30
+    user_agents:
+      - "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      - "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      - "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+exchange_rates:
+  provider: "xe.com"
+  cache_ttl_hours: 24
+  fallback_rate: 1000  # ARS per USD
+
+aws:
+  region: "us-east-1"
+  bedrock:
+    model_id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    max_tokens: 1024
+    temperature: 0.7
+    max_retries: 3
+
+prompts:
+  default: "prompts/investment_summary.yaml"
+
+logging:
+  level: "INFO"
+  format: "json"
+  handlers: ["console"]
+
+debug:
+  keep_intermediates: false
+  keep_partial: false
+  enable_request_logging: false
+  dry_run: false
+
+security:
+  enable_pii_scrubbing: true
+  pii_replacement: "[REDACTED]"
+  pii_patterns: {}  # Custom PII patterns can be added here
+  validate_config_on_startup: true
+
+network:
+  max_retries: 3
+  backoff_factor: 0.3
+  timeout_seconds: 30
+  user_agent: "RENTA/1.0.0"
+  base_delay: 1.0
+  max_delay: 60.0
+  exponential_base: 2.0
+  jitter: true

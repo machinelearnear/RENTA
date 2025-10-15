@@ -1,0 +1,29 @@
+# Include documentation and metadata files
+include README.md
+include CHANGELOG.md
+include LEGAL_COMPLIANCE.md
+include LICENSE
+include requirements.txt
+
+# Include configuration and data files
+recursive-include renta/data *.yaml *.md *.csv
+recursive-include renta/prompts *.yaml
+recursive-include renta/schemas *.json
+
+# Include examples and documentation
+recursive-include examples *.py *.ipynb *.yaml
+recursive-include docs *.md *.yml *.yaml
+
+# Exclude development and build artifacts
+exclude .gitignore
+exclude pyproject.toml.bak
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude * *.so
+recursive-exclude * .DS_Store
+recursive-exclude .git *
+recursive-exclude .pytest_cache *
+recursive-exclude .mypy_cache *
+recursive-exclude build *
+recursive-exclude dist *
+recursive-exclude *.egg-info *

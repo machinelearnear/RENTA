@@ -1,0 +1,97 @@
+site_name: RENTA Documentation
+site_description: Real Estate Network and Trend Analyzer - API Documentation
+site_url: https://renta.readthedocs.io
+repo_url: https://github.com/renta-dev/renta
+repo_name: renta-dev/renta
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue
+      accent: orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue
+      accent: orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_toc_entry: false
+            merge_init_into_class: true
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Configuration: getting-started/configuration.md
+  - API Reference:
+    - RealEstateAnalyzer: api/analyzer.md
+    - Configuration: api/config.md
+    - Data Ingestion: api/ingestion.md
+    - Spatial Analysis: api/spatial.md
+    - AI Analysis: api/ai.md
+    - Export: api/export.md
+    - Exceptions: api/exceptions.md
+  - Examples:
+    - Basic Usage: examples/basic-usage.md
+    - Advanced Configuration: examples/advanced-config.md
+    - Custom Strategies: examples/custom-strategies.md
+    - Batch Processing: examples/batch-processing.md
+  - Legal:
+    - Legal Notice: legal/legal-notice.md
+    - Compliance Guide: legal/compliance.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/renta-dev/renta
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/renta/
+  version:
+    provider: mike

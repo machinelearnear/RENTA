@@ -25,6 +25,10 @@ processed/
 *.swp
 *.swo
 *~
+.kiro/
+
+# GitHub
+.github/
 
 # OS
 .DS_Store

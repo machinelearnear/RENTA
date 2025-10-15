@@ -1,0 +1,98 @@
+# Production Configuration for RENTA
+# Optimized for production deployment with reliability and performance
+
+# Data storage - production paths
+data:
+  cache_dir: "/var/lib/renta/cache"
+  export_dir: "/var/lib/renta/exports"
+  freshness_threshold_hours: 24  # Daily refresh
+
+# Airbnb matching - production settings
+airbnb:
+  matching:
+    radius_km: 0.3  # Standard radius
+    min_nights_threshold: 7  # Focus on medium-term rentals
+    min_review_score: 4.0  # Quality threshold
+    occupancy_thresholds:
+      high: 14
+      medium: 7
+    max_matches_per_property: 50  # Reasonable limit
+
+# Zonaprop scraping - production rate limiting
+zonaprop:
+  scraping:
+    rate_limit_seconds: 5  # Respectful rate limiting
+    max_retries: 3
+    timeout_seconds: 30
+    user_agents:
+      - "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      - "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+# AWS Bedrock - production settings
+aws:
+  region: "us-east-1"
+  bedrock:
+    model_id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"  # Best quality model
+    max_tokens: 1024
+    temperature: 0.7  # Balanced creativity
+    max_retries: 3
+    timeout_seconds: 60
+    dry_run: false
+
+# Prompts - production templates
+prompts:
+  default: "prompts/investment_summary.yaml"
+
+# Network settings - production reliability
+network:
+  max_retries: 3
+  timeout_seconds: 30
+  backoff_factor: 0.3
+  user_agent: "RENTA/1.0.0"
+
+# Logging - production logging
+logging:
+  level: "INFO"
+  format: "json"  # Structured logging for analysis
+
+# Debug settings - disabled for production
+debug:
+  enable_request_logging: false
+  keep_intermediates: false
+  keep_partial: false
+
+# Performance settings - optimized for production
+performance:
+  batch_size: 1000
+  parallel_processing: true
+  max_workers: 4
+
+# Exchange rates - production settings
+exchange_rates:
+  provider: "xe.com"
+  cache_ttl_hours: 24
+  fallback_rate: 1000
+
+# Security settings - production hardening
+security:
+  validate_ssl: true
+  max_file_size_mb: 100
+  allowed_domains:
+    - "insideairbnb.com"
+    - "zonaprop.com.ar"
+    - "xe.com"
+    - "api.xe.com"
+
+# Monitoring and alerting
+monitoring:
+  enable_metrics: true
+  metrics_endpoint: "http://localhost:9090/metrics"
+  alert_on_errors: true
+  max_error_rate: 0.1  # 10% error rate threshold
+
+# Backup and recovery
+backup:
+  enable_backup: true
+  backup_interval_hours: 24
+  backup_retention_days: 30
+  backup_location: "/var/backups/renta"

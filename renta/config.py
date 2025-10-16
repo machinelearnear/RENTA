@@ -125,7 +125,7 @@ class ConfigManager:
                     "validator": e.validator,
                     "validator_value": e.validator_value
                 }
-            )
+            ) from e
     
     @staticmethod
     def discover_config_path() -> Optional[str]:
@@ -168,14 +168,14 @@ class ConfigManager:
             raise ConfigurationError(
                 f"Failed to load configuration schema: {e}",
                 details={"error_type": type(e).__name__}
-            )
+            ) from e
     
     def _load_default_config(self) -> Dict[str, Any]:
         """Load embedded default configuration.
-        
+
         Returns:
             Default configuration dictionary
-            
+
         Raises:
             ConfigurationError: If default config cannot be loaded
         """
@@ -186,7 +186,7 @@ class ConfigManager:
             raise ConfigurationError(
                 f"Failed to load default configuration: {e}",
                 details={"error_type": type(e).__name__}
-            )
+            ) from e
     
     def _load_user_config(self, config_path: str) -> Dict[str, Any]:
         """Load user configuration from file.
@@ -204,21 +204,21 @@ class ConfigManager:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
                 return config if config is not None else {}
-        except FileNotFoundError:
+        except FileNotFoundError as e:
             raise ConfigurationError(
                 f"Configuration file not found: {config_path}",
                 details={"path": config_path}
-            )
+            ) from e
         except yaml.YAMLError as e:
             raise ConfigurationError(
                 f"Invalid YAML in configuration file {config_path}: {e}",
                 details={"path": config_path, "yaml_error": str(e)}
-            )
+            ) from e
         except Exception as e:
             raise ConfigurationError(
                 f"Failed to load configuration from {config_path}: {e}",
                 details={"path": config_path, "error_type": type(e).__name__}
-            )
+            ) from e
     
     def _deep_merge(self, base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
         """Deep merge two configuration dictionaries.

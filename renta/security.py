@@ -83,7 +83,7 @@ class CredentialManager:
             
             return account_info
             
-        except NoCredentialsError:
+        except NoCredentialsError as e:
             error_msg = (
                 "AWS credentials not found. Please configure credentials using one of:\n"
                 "1. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)\n"
@@ -100,16 +100,16 @@ class CredentialManager:
                     "region": self.config.get('aws.region', 'us-east-1'),
                     "credential_sources_checked": [
                         "environment_variables",
-                        "credentials_file", 
+                        "credentials_file",
                         "iam_role",
                         "sso"
                     ]
                 }
-            )
-            
+            ) from e
+
         except ClientError as e:
             error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-            
+
             if error_code in ['InvalidUserID.NotFound', 'AccessDenied']:
                 error_msg = (
                     f"AWS credentials are invalid or lack required permissions: {e}\n"
@@ -121,7 +121,7 @@ class CredentialManager:
             else:
                 error_msg = f"AWS credential validation failed: {e}"
                 self.logger.error("AWS credential validation failed", error_code=error_code, error=str(e))
-            
+
             raise AIServiceConfigurationError(
                 error_msg,
                 details={
@@ -129,8 +129,8 @@ class CredentialManager:
                     "aws_error": str(e),
                     "region": self.config.get('aws.region', 'us-east-1')
                 }
-            )
-            
+            ) from e
+
         except Exception as e:
             self.logger.error("Unexpected error during credential validation", error=str(e))
             raise AIServiceConfigurationError(
@@ -139,7 +139,7 @@ class CredentialManager:
                     "error_type": type(e).__name__,
                     "region": self.config.get('aws.region', 'us-east-1')
                 }
-            )
+            ) from e
     
     def get_aws_session(self) -> boto3.Session:
         """Get validated AWS session.
@@ -185,8 +185,11 @@ class CredentialManager:
             )
             if response.status_code == 200:
                 return "iam_role"
-        except:
-            pass
+        except Exception as e:
+            self.logger.debug(
+                "IAM role detection failed (expected when not running on EC2/ECS/Lambda)",
+                error=str(e)
+            )
         
         # Check for SSO
         sso_cache_dir = Path.home() / '.aws' / 'sso' / 'cache'

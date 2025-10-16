@@ -897,16 +897,25 @@ class ExchangeRateProvider:
             if self.cache_file.exists():
                 with open(self.cache_file, 'r') as f:
                     self._rate_cache = json.load(f)
-        except Exception:
+        except Exception as e:
+            logger.debug(
+                "Failed to load exchange rate cache, starting with empty cache",
+                error=str(e),
+                cache_file=str(self.cache_file)
+            )
             self._rate_cache = {}
-    
+
     def _save_cache(self) -> None:
         """Save exchange rate cache to file."""
         try:
             with open(self.cache_file, 'w') as f:
                 json.dump(self._rate_cache, f, indent=2)
-        except Exception:
-            pass  # Ignore cache save errors
+        except Exception as e:
+            logger.warning(
+                "Failed to save exchange rate cache",
+                error=str(e),
+                cache_file=str(self.cache_file)
+            )
 
 
 class DataProcessor:

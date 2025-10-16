@@ -121,11 +121,11 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/renta-dev/renta"
-Documentation = "https://renta.readthedocs.io"
-Repository = "https://github.com/renta-dev/renta"
-"Bug Tracker" = "https://github.com/renta-dev/renta/issues"
-Changelog = "https://github.com/renta-dev/renta/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/machinelearnear/RENTA"
+Documentation = "https://github.com/machinelearnear/RENTA#readme"
+Repository = "https://github.com/machinelearnear/RENTA"
+"Bug Tracker" = "https://github.com/machinelearnear/RENTA/issues"
+Changelog = "https://github.com/machinelearnear/RENTA/blob/main/CHANGELOG.md"
 
 [project.entry-points."renta.exporters"]
 # Plugin entry points for data exporters

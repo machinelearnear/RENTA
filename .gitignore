@@ -27,8 +27,9 @@ processed/
 *~
 .kiro/
 
-# GitHub
-.github/
+# GitHub (allow workflows)
+.github/*
+!.github/workflows/
 
 # OS
 .DS_Store

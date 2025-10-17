@@ -28,39 +28,27 @@ Examples:
 For advanced usage, use the Python API:
   from renta import RealEstateAnalyzer
   analyzer = RealEstateAnalyzer()
-        """
+        """,
     )
-    
+
+    parser.add_argument("--version", action="version", version=f"RENTA {__version__}")
+
     parser.add_argument(
-        "--version", 
-        action="version", 
-        version=f"RENTA {__version__}"
+        "--legal-notice", action="store_true", help="Show legal notice and compliance information"
     )
-    
+
+    parser.add_argument("--config", type=str, help="Path to configuration file")
+
     parser.add_argument(
-        "--legal-notice",
-        action="store_true",
-        help="Show legal notice and compliance information"
+        "--validate-config", action="store_true", help="Validate configuration file and exit"
     )
-    
-    parser.add_argument(
-        "--config",
-        type=str,
-        help="Path to configuration file"
-    )
-    
-    parser.add_argument(
-        "--validate-config",
-        action="store_true", 
-        help="Validate configuration file and exit"
-    )
-    
+
     args = parser.parse_args()
-    
+
     if args.legal_notice:
         show_legal_notice()
         return 0
-        
+
     if args.validate_config:
         try:
             analyzer = RealEstateAnalyzer(config_path=args.config)
@@ -69,12 +57,12 @@ For advanced usage, use the Python API:
         except Exception as e:
             print(f"✗ Configuration validation failed: {e}")
             return 1
-    
+
     # If no specific action requested, show help
     if len(sys.argv) == 1:
         parser.print_help()
         return 0
-        
+
     try:
         analyzer = RealEstateAnalyzer(config_path=args.config)
         print(f"RENTA {__version__} initialized successfully")

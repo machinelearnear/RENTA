@@ -23,7 +23,7 @@ class TestExportManager:
         manager = ExportManager(mock_config_manager)
 
         assert manager.config is not None
-        assert hasattr(manager, 'logger')
+        assert hasattr(manager, "logger")
 
     def test_list_supported_formats(self, mock_config_manager):
         """Test listing supported export formats."""
@@ -32,9 +32,9 @@ class TestExportManager:
         formats = manager.list_supported_formats()
 
         assert isinstance(formats, list)
-        assert 'csv' in formats or 'CSV' in formats
-        assert 'json' in formats or 'JSON' in formats
-        assert 'dataframe' in formats or 'DataFrame' in formats
+        assert "csv" in formats or "CSV" in formats
+        assert "json" in formats or "JSON" in formats
+        assert "dataframe" in formats or "DataFrame" in formats
 
     def test_export_csv(self, mock_config_manager, sample_enriched_data, test_data_dir):
         """Test exporting to CSV format."""
@@ -43,11 +43,11 @@ class TestExportManager:
         output_path = test_data_dir / "test_output.csv"
 
         # Export to CSV
-        result = manager.export(sample_enriched_data, format='csv', path=str(output_path))
+        result = manager.export(sample_enriched_data, format="csv", path=str(output_path))
 
         # Verify file was created
         assert Path(result).exists()
-        assert Path(result).suffix == '.csv'
+        assert Path(result).suffix == ".csv"
 
         # Verify content
         loaded_data = pd.read_csv(result)
@@ -60,14 +60,14 @@ class TestExportManager:
         output_path = test_data_dir / "test_output.json"
 
         # Export to JSON
-        result = manager.export(sample_enriched_data, format='json', path=str(output_path))
+        result = manager.export(sample_enriched_data, format="json", path=str(output_path))
 
         # Verify file was created
         assert Path(result).exists()
-        assert Path(result).suffix == '.json'
+        assert Path(result).suffix == ".json"
 
         # Verify content
-        with open(result, 'r') as f:
+        with open(result, "r") as f:
             loaded_data = json.load(f)
         assert len(loaded_data) > 0
 
@@ -76,7 +76,7 @@ class TestExportManager:
         manager = ExportManager(mock_config_manager)
 
         # Export as DataFrame (no file)
-        result = manager.export(sample_enriched_data, format='dataframe')
+        result = manager.export(sample_enriched_data, format="dataframe")
 
         assert isinstance(result, pd.DataFrame)
         assert len(result) == len(sample_enriched_data)
@@ -86,7 +86,7 @@ class TestExportManager:
         manager = ExportManager(mock_config_manager)
 
         with pytest.raises(ExportFormatError):
-            manager.export(sample_enriched_data, format='invalid_format')
+            manager.export(sample_enriched_data, format="invalid_format")
 
 
 @pytest.mark.unit
@@ -120,17 +120,16 @@ class TestCSVExporter:
         # Should be a string
         if isinstance(result, str):
             assert len(result) > 0
-            assert ',' in result  # CSV delimiter
+            assert "," in result  # CSV delimiter
 
     def test_encoding_handling(self, mock_config_manager, test_data_dir):
         """Test handling of different encodings."""
         exporter = CSVExporter(mock_config_manager)
 
         # Create data with special characters
-        special_data = pd.DataFrame({
-            'id': [1, 2, 3],
-            'name': ['Palermo', 'Recoleta', 'Núñez']  # Spanish characters
-        })
+        special_data = pd.DataFrame(
+            {"id": [1, 2, 3], "name": ["Palermo", "Recoleta", "Núñez"]}  # Spanish characters
+        )
 
         output_path = test_data_dir / "special_chars.csv"
 
@@ -138,8 +137,8 @@ class TestCSVExporter:
         result = exporter.export(special_data, str(output_path))
 
         # Verify it can be read back
-        loaded = pd.read_csv(result, encoding='utf-8')
-        assert 'Núñez' in loaded['name'].values
+        loaded = pd.read_csv(result, encoding="utf-8")
+        assert "Núñez" in loaded["name"].values
 
     def test_empty_dataframe(self, mock_config_manager, test_data_dir):
         """Test exporting empty DataFrame."""
@@ -175,7 +174,7 @@ class TestJSONExporter:
         assert Path(result).exists()
 
         # Load and verify
-        with open(result, 'r') as f:
+        with open(result, "r") as f:
             loaded = json.load(f)
 
         assert len(loaded) == len(sample_enriched_data)
@@ -190,7 +189,7 @@ class TestJSONExporter:
         result = exporter.export(sample_enriched_data, str(output_path))
 
         # Read and check formatting
-        with open(result, 'r') as f:
+        with open(result, "r") as f:
             content = f.read()
 
         # Should be valid JSON
@@ -200,7 +199,7 @@ class TestJSONExporter:
     def test_orient_options(self, mock_config_manager, sample_enriched_data):
         """Test different JSON orientations (records, split, etc.)."""
         # Test different orientations
-        orientations = ['records', 'split', 'index', 'columns', 'values']
+        orientations = ["records", "split", "index", "columns", "values"]
 
         for orient in orientations:
             json_str = sample_enriched_data.to_json(orient=orient)
@@ -214,10 +213,8 @@ class TestJSONExporter:
 
         # Create data with NaN
         import numpy as np
-        nan_data = pd.DataFrame({
-            'id': [1, 2, 3],
-            'value': [1.0, np.nan, 3.0]
-        })
+
+        nan_data = pd.DataFrame({"id": [1, 2, 3], "value": [1.0, np.nan, 3.0]})
 
         output_path = test_data_dir / "nan_test.json"
 
@@ -225,11 +222,11 @@ class TestJSONExporter:
         result = exporter.export(nan_data, str(output_path))
 
         # Load and verify NaN handling
-        with open(result, 'r') as f:
+        with open(result, "r") as f:
             loaded = json.load(f)
 
         # NaN should be null in JSON
-        assert loaded[1]['value'] is None or 'null' in json.dumps(loaded[1])
+        assert loaded[1]["value"] is None or "null" in json.dumps(loaded[1])
 
 
 @pytest.mark.unit
@@ -261,7 +258,7 @@ class TestSchemaValidation:
 
         # Export to CSV
         csv_path = test_data_dir / "schema_test.csv"
-        csv_result = manager.export(sample_enriched_data, format='csv', path=str(csv_path))
+        csv_result = manager.export(sample_enriched_data, format="csv", path=str(csv_path))
 
         # Load and compare columns
         loaded_csv = pd.read_csv(csv_result)
@@ -269,7 +266,7 @@ class TestSchemaValidation:
 
         # Export to JSON
         json_path = test_data_dir / "schema_test.json"
-        json_result = manager.export(sample_enriched_data, format='json', path=str(json_path))
+        json_result = manager.export(sample_enriched_data, format="json", path=str(json_path))
 
         # Load and compare
         loaded_json = pd.read_json(json_result)
@@ -278,23 +275,25 @@ class TestSchemaValidation:
     def test_data_type_preservation(self, mock_config_manager, test_data_dir):
         """Test that data types are preserved in export."""
         # Create data with specific types
-        typed_data = pd.DataFrame({
-            'id': pd.Series([1, 2, 3], dtype='int64'),
-            'price': pd.Series([100.5, 200.7, 300.9], dtype='float64'),
-            'name': pd.Series(['A', 'B', 'C'], dtype='object'),
-            'flag': pd.Series([True, False, True], dtype='bool')
-        })
+        typed_data = pd.DataFrame(
+            {
+                "id": pd.Series([1, 2, 3], dtype="int64"),
+                "price": pd.Series([100.5, 200.7, 300.9], dtype="float64"),
+                "name": pd.Series(["A", "B", "C"], dtype="object"),
+                "flag": pd.Series([True, False, True], dtype="bool"),
+            }
+        )
 
         manager = ExportManager(mock_config_manager)
 
         # Export and reload CSV
         csv_path = test_data_dir / "types_test.csv"
-        csv_result = manager.export(typed_data, format='csv', path=str(csv_path))
+        csv_result = manager.export(typed_data, format="csv", path=str(csv_path))
         loaded = pd.read_csv(csv_result)
 
         # Check types are reasonable (CSV may convert some types)
-        assert loaded['id'].dtype in [np.int64, np.int32, int]
-        assert loaded['price'].dtype in [np.float64, float]
+        assert loaded["id"].dtype in [np.int64, np.int32, int]
+        assert loaded["price"].dtype in [np.float64, float]
 
     def test_index_handling(self, mock_config_manager, sample_enriched_data, test_data_dir):
         """Test handling of DataFrame index in export."""
@@ -302,11 +301,11 @@ class TestSchemaValidation:
 
         # Set custom index
         indexed_data = sample_enriched_data.copy()
-        indexed_data.set_index('id', inplace=True)
+        indexed_data.set_index("id", inplace=True)
 
         # Export
         csv_path = test_data_dir / "indexed.csv"
-        result = manager.export(indexed_data, format='csv', path=str(csv_path))
+        result = manager.export(indexed_data, format="csv", path=str(csv_path))
 
         # Load and check
         loaded = pd.read_csv(result)
@@ -326,7 +325,7 @@ class TestErrorHandling:
         invalid_path = "/nonexistent/directory/file.csv"
 
         with pytest.raises((ExportFormatError, OSError, FileNotFoundError)):
-            manager.export(sample_enriched_data, format='csv', path=invalid_path)
+            manager.export(sample_enriched_data, format="csv", path=invalid_path)
 
     def test_read_only_directory(self, mock_config_manager, sample_enriched_data, test_data_dir):
         """Test handling of permission errors."""
@@ -335,8 +334,9 @@ class TestErrorHandling:
         # This test would require changing permissions
         # Simplified version: just test that errors are caught
         try:
-            result = manager.export(sample_enriched_data, format='csv',
-                                   path=str(test_data_dir / "test.csv"))
+            result = manager.export(
+                sample_enriched_data, format="csv", path=str(test_data_dir / "test.csv")
+            )
             assert Path(result).exists()
         except (ExportFormatError, PermissionError):
             assert True
@@ -349,21 +349,20 @@ class TestErrorHandling:
 
         # Should handle empty data gracefully
         with pytest.raises((ExportFormatError, ValueError)):
-            manager.export(empty_df, format='csv')
+            manager.export(empty_df, format="csv")
 
     def test_corrupt_data_handling(self, mock_config_manager):
         """Test handling of corrupt or invalid data."""
         manager = ExportManager(mock_config_manager)
 
         # Create problematic data
-        corrupt_data = pd.DataFrame({
-            'id': [1, 2, 3],
-            'circular_ref': [None, None, None]  # Simplified example
-        })
+        corrupt_data = pd.DataFrame(
+            {"id": [1, 2, 3], "circular_ref": [None, None, None]}  # Simplified example
+        )
 
         # Should handle gracefully
         try:
-            result = manager.export(corrupt_data, format='json')
+            result = manager.export(corrupt_data, format="json")
             assert result is not None
         except (ExportFormatError, ValueError, TypeError):
             assert True

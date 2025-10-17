@@ -24,7 +24,7 @@ class TestAirbnbIngester:
 
         assert ingester.config is not None
         assert ingester.cache_dir is not None
-        assert hasattr(ingester, 'logger')
+        assert hasattr(ingester, "logger")
 
     def test_is_data_fresh_no_cache(self, mock_config_manager):
         """Test freshness check when no cache exists."""
@@ -33,31 +33,35 @@ class TestAirbnbIngester:
         # With no cached data, should return False
         assert ingester.is_data_fresh() is False
 
-    @patch('renta.ingestion.requests.get')
+    @patch("renta.ingestion.requests.get")
     def test_download_data_force(self, mock_get, mock_config_manager, sample_airbnb_data):
         """Test force downloading Airbnb data."""
         # Mock successful HTTP response
         mock_response = Mock()
         mock_response.status_code = 200
-        mock_response.content = sample_airbnb_data.to_csv(index=False).encode('utf-8')
+        mock_response.content = sample_airbnb_data.to_csv(index=False).encode("utf-8")
         mock_get.return_value = mock_response
 
         ingester = AirbnbIngester(mock_config_manager)
 
         # Test download
-        with patch.object(ingester, '_get_download_urls', return_value={'listings': 'http://test.com/listings.csv'}):
+        with patch.object(
+            ingester,
+            "_get_download_urls",
+            return_value={"listings": "http://test.com/listings.csv"},
+        ):
             result = ingester.download_data(force=True)
 
             assert result is not None
-            assert 'listings' in result
-            assert Path(result['listings']).exists()
+            assert "listings" in result
+            assert Path(result["listings"]).exists()
 
     def test_download_data_cached(self, mock_config_manager, sample_airbnb_data, test_data_dir):
         """Test using cached data when fresh."""
         ingester = AirbnbIngester(mock_config_manager)
 
         # Create fake cached file
-        cache_file = Path(ingester.cache_dir) / 'listings.csv'
+        cache_file = Path(ingester.cache_dir) / "listings.csv"
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         sample_airbnb_data.to_csv(cache_file, index=False)
 
@@ -78,30 +82,30 @@ class TestDataProcessor:
         processor = DataProcessor(mock_config_manager)
 
         # Create temp file with sample data
-        temp_file = test_data_dir / 'listings.csv'
+        temp_file = test_data_dir / "listings.csv"
         sample_airbnb_data.to_csv(temp_file, index=False)
 
         # Process the data
-        result = processor.process_airbnb_data({'listings': str(temp_file)})
+        result = processor.process_airbnb_data({"listings": str(temp_file)})
 
         assert isinstance(result, pd.DataFrame)
         assert len(result) > 0
-        assert 'id' in result.columns
-        assert 'latitude' in result.columns
-        assert 'longitude' in result.columns
-        assert 'price' in result.columns
+        assert "id" in result.columns
+        assert "latitude" in result.columns
+        assert "longitude" in result.columns
+        assert "price" in result.columns
 
     def test_process_empty_data(self, mock_config_manager, test_data_dir):
         """Test processing empty Airbnb data."""
         processor = DataProcessor(mock_config_manager)
 
         # Create empty CSV
-        empty_file = test_data_dir / 'empty.csv'
+        empty_file = test_data_dir / "empty.csv"
         pd.DataFrame().to_csv(empty_file, index=False)
 
         # Should handle empty data gracefully
         with pytest.raises((AirbnbDataError, ValueError)):
-            processor.process_airbnb_data({'listings': str(empty_file)})
+            processor.process_airbnb_data({"listings": str(empty_file)})
 
     def test_data_normalization(self, mock_config_manager, sample_airbnb_data):
         """Test that data normalization applies expected transformations."""
@@ -109,13 +113,13 @@ class TestDataProcessor:
 
         # Add some edge cases to test data
         test_data = sample_airbnb_data.copy()
-        test_data.loc[0, 'price'] = None  # Null price
-        test_data.loc[1, 'price'] = 0  # Zero price
-        test_data.loc[2, 'latitude'] = 91.0  # Invalid latitude
+        test_data.loc[0, "price"] = None  # Null price
+        test_data.loc[1, "price"] = 0  # Zero price
+        test_data.loc[2, "latitude"] = 91.0  # Invalid latitude
 
         # Process should handle these cases
         # This is a placeholder - actual implementation may vary
-        assert 'price' in test_data.columns
+        assert "price" in test_data.columns
 
 
 @pytest.mark.unit
@@ -127,12 +131,12 @@ class TestDataFreshness:
         ingester = AirbnbIngester(mock_config_manager)
 
         # Get threshold from config
-        threshold_hours = mock_config_manager.get('data.freshness_threshold_hours', 24)
+        threshold_hours = mock_config_manager.get("data.freshness_threshold_hours", 24)
 
         assert threshold_hours > 0
         assert isinstance(threshold_hours, (int, float))
 
-    @patch('renta.ingestion.time.time')
+    @patch("renta.ingestion.time.time")
     def test_cache_expiry(self, mock_time, mock_config_manager, test_data_dir):
         """Test that cache expires after threshold."""
         # Set current time
@@ -142,16 +146,17 @@ class TestDataFreshness:
         ingester = AirbnbIngester(mock_config_manager)
 
         # Create cache file with old timestamp
-        cache_file = Path(ingester.cache_dir) / 'listings.csv'
+        cache_file = Path(ingester.cache_dir) / "listings.csv"
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        cache_file.write_text('test')
+        cache_file.write_text("test")
 
         # Set file time to 48 hours ago (older than 24 hour threshold)
-        threshold_hours = mock_config_manager.get('data.freshness_threshold_hours', 24)
+        threshold_hours = mock_config_manager.get("data.freshness_threshold_hours", 24)
         old_time = current_time - (threshold_hours + 1) * 3600
 
         # Modify file timestamp
         import os
+
         os.utime(cache_file, (old_time, old_time))
 
         # Should not be fresh
@@ -165,20 +170,25 @@ class TestDataFreshness:
 class TestErrorHandling:
     """Test error handling in Airbnb ingestion."""
 
-    @patch('renta.ingestion.requests.get')
+    @patch("renta.ingestion.requests.get")
     def test_network_error_handling(self, mock_get, mock_config_manager):
         """Test handling of network errors during download."""
         # Mock network error
         import requests
+
         mock_get.side_effect = requests.exceptions.ConnectionError("Network error")
 
         ingester = AirbnbIngester(mock_config_manager)
 
-        with patch.object(ingester, '_get_download_urls', return_value={'listings': 'http://test.com/listings.csv'}):
+        with patch.object(
+            ingester,
+            "_get_download_urls",
+            return_value={"listings": "http://test.com/listings.csv"},
+        ):
             with pytest.raises((AirbnbDataError, requests.exceptions.ConnectionError)):
                 ingester.download_data(force=True)
 
-    @patch('renta.ingestion.requests.get')
+    @patch("renta.ingestion.requests.get")
     def test_http_error_handling(self, mock_get, mock_config_manager):
         """Test handling of HTTP errors (404, 500, etc.)."""
         # Mock HTTP error
@@ -189,6 +199,10 @@ class TestErrorHandling:
 
         ingester = AirbnbIngester(mock_config_manager)
 
-        with patch.object(ingester, '_get_download_urls', return_value={'listings': 'http://test.com/listings.csv'}):
+        with patch.object(
+            ingester,
+            "_get_download_urls",
+            return_value={"listings": "http://test.com/listings.csv"},
+        ):
             with pytest.raises(Exception):
                 ingester.download_data(force=True)

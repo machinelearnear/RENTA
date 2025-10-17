@@ -22,7 +22,7 @@ class TestSpatialMatcher:
         matcher = SpatialMatcher(mock_config_manager)
 
         assert matcher.config is not None
-        assert hasattr(matcher, 'logger')
+        assert hasattr(matcher, "logger")
 
     def test_match_properties(self, mock_config_manager, sample_zonaprop_data, sample_airbnb_data):
         """Test matching properties to Airbnb listings."""
@@ -33,14 +33,14 @@ class TestSpatialMatcher:
 
         assert isinstance(matches, pd.DataFrame)
         # Should have property_id and listing_id columns
-        assert 'property_id' in matches.columns or len(matches) == 0
+        assert "property_id" in matches.columns or len(matches) == 0
 
     def test_radius_filtering(self, mock_config_manager):
         """Test that radius filtering works correctly."""
         matcher = SpatialMatcher(mock_config_manager)
 
         # Get radius from config
-        radius_km = mock_config_manager.get('airbnb.matching.radius_km', 0.3)
+        radius_km = mock_config_manager.get("airbnb.matching.radius_km", 0.3)
 
         assert radius_km > 0
         assert isinstance(radius_km, (int, float))
@@ -65,8 +65,8 @@ class TestSpatialMatcher:
         dlat = lat2_rad - lat1_rad
         dlon = lon2_rad - lon1_rad
 
-        a = sin(dlat/2)**2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon/2)**2
-        c = 2 * atan2(sqrt(a), sqrt(1-a))
+        a = sin(dlat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2) ** 2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
         distance = R * c
 
         assert distance < 1.0  # Should be less than 1km
@@ -84,14 +84,16 @@ class TestSpatialMatcher:
         with pytest.raises((MatchingError, ValueError)):
             matcher.match_properties(empty_properties, empty_listings)
 
-    def test_missing_coordinates(self, mock_config_manager, sample_zonaprop_data, sample_airbnb_data):
+    def test_missing_coordinates(
+        self, mock_config_manager, sample_zonaprop_data, sample_airbnb_data
+    ):
         """Test handling of missing coordinates."""
         matcher = SpatialMatcher(mock_config_manager)
 
         # Add missing coordinates
         invalid_properties = sample_zonaprop_data.copy()
-        invalid_properties.loc[0, 'latitude'] = None
-        invalid_properties.loc[1, 'longitude'] = None
+        invalid_properties.loc[0, "latitude"] = None
+        invalid_properties.loc[1, "longitude"] = None
 
         # Should handle missing coordinates
         try:
@@ -112,7 +114,7 @@ class TestEnrichmentEngine:
         engine = EnrichmentEngine(mock_config_manager)
 
         assert engine.config is not None
-        assert hasattr(engine, 'logger')
+        assert hasattr(engine, "logger")
 
     def test_enrich_properties(self, mock_config_manager, sample_zonaprop_data, sample_airbnb_data):
         """Test enriching properties with Airbnb data."""
@@ -129,17 +131,13 @@ class TestEnrichmentEngine:
         assert len(enriched) == len(sample_zonaprop_data)
 
         # Should have enrichment columns
-        if 'match_status' in enriched.columns:
-            assert enriched['match_status'].isin(['matched', 'no_matches', 'error']).all()
+        if "match_status" in enriched.columns:
+            assert enriched["match_status"].isin(["matched", "no_matches", "error"]).all()
 
     def test_aggregation_metrics(self, mock_config_manager, sample_enriched_data):
         """Test that correct aggregation metrics are calculated."""
         # Check expected enrichment columns
-        expected_columns = [
-            'avg_airbnb_price',
-            'median_airbnb_price',
-            'matched_listings_count'
-        ]
+        expected_columns = ["avg_airbnb_price", "median_airbnb_price", "matched_listings_count"]
 
         for col in expected_columns:
             if col in sample_enriched_data.columns:
@@ -149,19 +147,19 @@ class TestEnrichmentEngine:
     def test_rental_yield_estimation(self, mock_config_manager, sample_enriched_data):
         """Test rental yield estimation calculations."""
         # Check if rental yield is calculated
-        if 'rental_yield_estimate' in sample_enriched_data.columns:
+        if "rental_yield_estimate" in sample_enriched_data.columns:
             # Should be between 0 and 1 (or NaN)
-            valid_yields = sample_enriched_data['rental_yield_estimate'].dropna()
+            valid_yields = sample_enriched_data["rental_yield_estimate"].dropna()
             if len(valid_yields) > 0:
                 assert (valid_yields >= 0).all()
                 assert (valid_yields <= 1).all()
 
     def test_occupancy_estimation(self, mock_config_manager, sample_enriched_data):
         """Test occupancy rate estimation."""
-        if 'estimated_occupancy' in sample_enriched_data.columns:
+        if "estimated_occupancy" in sample_enriched_data.columns:
             # Should have valid categories
-            valid_categories = ['high', 'medium', 'low', 'unknown']
-            assert sample_enriched_data['estimated_occupancy'].isin(valid_categories).all()
+            valid_categories = ["high", "medium", "low", "unknown"]
+            assert sample_enriched_data["estimated_occupancy"].isin(valid_categories).all()
 
 
 @pytest.mark.unit
@@ -173,14 +171,14 @@ class TestMatchingStrategy:
         strategy = DefaultMatchingStrategy(mock_config_manager)
 
         assert strategy is not None
-        assert hasattr(strategy, 'match')
+        assert hasattr(strategy, "match")
 
     def test_strategy_configuration(self, mock_config_manager):
         """Test that matching strategy respects configuration."""
         # Check configuration parameters
-        radius_km = mock_config_manager.get('airbnb.matching.radius_km')
-        min_nights = mock_config_manager.get('airbnb.matching.min_nights_threshold')
-        max_listings = mock_config_manager.get('airbnb.matching.max_listings_per_property')
+        radius_km = mock_config_manager.get("airbnb.matching.radius_km")
+        min_nights = mock_config_manager.get("airbnb.matching.min_nights_threshold")
+        max_listings = mock_config_manager.get("airbnb.matching.max_listings_per_property")
 
         assert radius_km is not None
         assert min_nights is not None
@@ -188,11 +186,11 @@ class TestMatchingStrategy:
 
     def test_min_nights_filtering(self, mock_config_manager, sample_airbnb_data):
         """Test filtering by minimum nights threshold."""
-        threshold = mock_config_manager.get('airbnb.matching.min_nights_threshold', 7)
+        threshold = mock_config_manager.get("airbnb.matching.min_nights_threshold", 7)
 
         # Filter listings
-        long_term = sample_airbnb_data[sample_airbnb_data['minimum_nights'] >= threshold]
-        short_term = sample_airbnb_data[sample_airbnb_data['minimum_nights'] < threshold]
+        long_term = sample_airbnb_data[sample_airbnb_data["minimum_nights"] >= threshold]
+        short_term = sample_airbnb_data[sample_airbnb_data["minimum_nights"] < threshold]
 
         # Both should be valid dataframes
         assert isinstance(long_term, pd.DataFrame)
@@ -200,7 +198,7 @@ class TestMatchingStrategy:
 
     def test_max_listings_limit(self, mock_config_manager):
         """Test maximum listings per property limit."""
-        max_listings = mock_config_manager.get('airbnb.matching.max_listings_per_property', 10)
+        max_listings = mock_config_manager.get("airbnb.matching.max_listings_per_property", 10)
 
         assert max_listings > 0
         assert isinstance(max_listings, int)
@@ -215,10 +213,10 @@ class TestSpatialIndexing:
         from sklearn.neighbors import BallTree
 
         # Extract coordinates
-        coords = sample_airbnb_data[['latitude', 'longitude']].values
+        coords = sample_airbnb_data[["latitude", "longitude"]].values
 
         # Create BallTree
-        tree = BallTree(np.radians(coords), metric='haversine')
+        tree = BallTree(np.radians(coords), metric="haversine")
 
         assert tree is not None
 
@@ -256,18 +254,20 @@ class TestErrorHandling:
         matcher = SpatialMatcher(mock_config_manager)
 
         # Create data with invalid coordinates
-        invalid_data = pd.DataFrame({
-            'id': [1, 2, 3],
-            'latitude': [91.0, -91.0, 0.0],  # Invalid latitudes
-            'longitude': [181.0, -181.0, 0.0]  # Invalid longitudes
-        })
+        invalid_data = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "latitude": [91.0, -91.0, 0.0],  # Invalid latitudes
+                "longitude": [181.0, -181.0, 0.0],  # Invalid longitudes
+            }
+        )
 
         # Should validate coordinates
         # Implementation may filter or raise error
         try:
             # Validate coordinate ranges
-            valid_lat = (invalid_data['latitude'] >= -90) & (invalid_data['latitude'] <= 90)
-            valid_lon = (invalid_data['longitude'] >= -180) & (invalid_data['longitude'] <= 180)
+            valid_lat = (invalid_data["latitude"] >= -90) & (invalid_data["latitude"] <= 90)
+            valid_lon = (invalid_data["longitude"] >= -180) & (invalid_data["longitude"] <= 180)
             assert not valid_lat.all() or not valid_lon.all()
         except (MatchingError, ValueError):
             assert True
@@ -277,8 +277,8 @@ class TestErrorHandling:
         matcher = SpatialMatcher(mock_config_manager)
 
         # Create dataframes with different schemas
-        properties = pd.DataFrame({'id': [1, 2], 'name': ['A', 'B']})
-        listings = pd.DataFrame({'listing_id': [1, 2], 'title': ['X', 'Y']})
+        properties = pd.DataFrame({"id": [1, 2], "name": ["A", "B"]})
+        listings = pd.DataFrame({"listing_id": [1, 2], "title": ["X", "Y"]})
 
         # Should handle schema mismatch
         with pytest.raises((MatchingError, KeyError, ValueError)):

@@ -24,7 +24,7 @@ class RetryConfig:
         max_delay: float = 60.0,
         exponential_base: float = 2.0,
         jitter: bool = True,
-        backoff_factor: float = 0.3
+        backoff_factor: float = 0.3,
     ):
         """Initialize retry configuration.
 
@@ -52,10 +52,10 @@ class RetryConfig:
         Returns:
             Delay in seconds
         """
-        delay = min(self.base_delay * (self.exponential_base ** attempt), self.max_delay)
+        delay = min(self.base_delay * (self.exponential_base**attempt), self.max_delay)
         if self.jitter:
             # Add jitter: 50-100% of calculated delay
-            delay *= (0.5 + random.random() * 0.5)
+            delay *= 0.5 + random.random() * 0.5
         return delay
 
     def should_retry(self, exception: Exception, attempt: int) -> bool:
@@ -82,7 +82,7 @@ class RetryConfig:
 
         # Check for specific HTTP status codes that should be retried
         if isinstance(exception, requests.exceptions.HTTPError):
-            if hasattr(exception, 'response') and exception.response is not None:
+            if hasattr(exception, "response") and exception.response is not None:
                 status_code = exception.response.status_code
                 # Retry on server errors and rate limiting
                 if status_code in [429, 500, 502, 503, 504]:
@@ -102,9 +102,9 @@ class RetryConfig:
         Returns:
             Retry-After delay in seconds, or None if header not present
         """
-        if hasattr(response, 'headers') and 'Retry-After' in response.headers:
+        if hasattr(response, "headers") and "Retry-After" in response.headers:
             try:
-                return float(response.headers['Retry-After'])
+                return float(response.headers["Retry-After"])
             except (ValueError, TypeError):
                 pass
         return None
@@ -113,7 +113,7 @@ class RetryConfig:
 def with_retry(
     retry_config: Optional[RetryConfig] = None,
     retryable_exceptions: Optional[Tuple] = None,
-    logger_instance: Optional[structlog.BoundLogger] = None
+    logger_instance: Optional[structlog.BoundLogger] = None,
 ):
     """Decorator to add retry logic to functions.
 
@@ -159,7 +159,7 @@ def with_retry(
                             f"Non-retryable error in {func.__name__}",
                             error=str(e),
                             error_type=type(e).__name__,
-                            attempt=attempt + 1
+                            attempt=attempt + 1,
                         )
                         raise
 
@@ -171,7 +171,7 @@ def with_retry(
                     delay = retry_config.calculate_delay(attempt)
 
                     # Check for Retry-After header
-                    if hasattr(e, 'response'):
+                    if hasattr(e, "response"):
                         retry_after = retry_config.get_retry_after_delay(e.response)
                         if retry_after:
                             delay = max(delay, retry_after)
@@ -182,7 +182,7 @@ def with_retry(
                         error_type=type(e).__name__,
                         attempt=attempt + 1,
                         max_attempts=retry_config.max_attempts,
-                        delay_seconds=round(delay, 2)
+                        delay_seconds=round(delay, 2),
                     )
 
                     time.sleep(delay)
@@ -192,9 +192,10 @@ def with_retry(
                 f"All retries exhausted for {func.__name__}",
                 final_error=str(last_exception),
                 error_type=type(last_exception).__name__,
-                total_attempts=retry_config.max_attempts
+                total_attempts=retry_config.max_attempts,
             )
             raise last_exception
 
         return wrapper
+
     return decorator

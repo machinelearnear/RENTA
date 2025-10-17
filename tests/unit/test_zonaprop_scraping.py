@@ -22,10 +22,10 @@ class TestZonapropScraper:
         scraper = ZonapropScraper(mock_config_manager)
 
         assert scraper.config is not None
-        assert hasattr(scraper, 'logger')
+        assert hasattr(scraper, "logger")
 
     @pytest.mark.network
-    @patch('renta.ingestion.requests.get')
+    @patch("renta.ingestion.requests.get")
     def test_scrape_search_results(self, mock_get, mock_config_manager):
         """Test scraping Zonaprop search results."""
         # Mock HTML response
@@ -100,7 +100,9 @@ class TestZonapropScraper:
         """
 
         # Test if scraper can detect Cloudflare
-        is_blocked = "cloudflare" in cloudflare_html.lower() or "just a moment" in cloudflare_html.lower()
+        is_blocked = (
+            "cloudflare" in cloudflare_html.lower() or "just a moment" in cloudflare_html.lower()
+        )
         assert is_blocked is True
 
 
@@ -113,18 +115,14 @@ class TestPropertyDataExtraction:
         scraper = ZonapropScraper(mock_config_manager)
 
         # Test various price formats
-        price_texts = [
-            "USD 120,000",
-            "U$S 150.000",
-            "120000 USD",
-            "US$ 95,000"
-        ]
+        price_texts = ["USD 120,000", "U$S 150.000", "120000 USD", "US$ 95,000"]
 
         # Price extraction logic should handle various formats
         for price_text in price_texts:
             # Extract numbers from text
             import re
-            numbers = re.findall(r'\d+', price_text.replace(',', '').replace('.', ''))
+
+            numbers = re.findall(r"\d+", price_text.replace(",", "").replace(".", ""))
             if numbers:
                 assert len(numbers) > 0
 
@@ -138,11 +136,12 @@ class TestPropertyDataExtraction:
         """
 
         from bs4 import BeautifulSoup
-        soup = BeautifulSoup(sample_html, 'html.parser')
-        location_div = soup.find('div', class_='location')
+
+        soup = BeautifulSoup(sample_html, "html.parser")
+        location_div = soup.find("div", class_="location")
 
         assert location_div is not None
-        assert 'Palermo' in location_div.get_text()
+        assert "Palermo" in location_div.get_text()
 
     def test_property_attributes(self):
         """Test extraction of property attributes (bedrooms, bathrooms, area)."""
@@ -155,12 +154,13 @@ class TestPropertyDataExtraction:
         """
 
         from bs4 import BeautifulSoup
-        soup = BeautifulSoup(sample_html, 'html.parser')
+
+        soup = BeautifulSoup(sample_html, "html.parser")
 
         # Test that attributes can be found
-        assert soup.find('span', class_='bedrooms') is not None
-        assert soup.find('span', class_='bathrooms') is not None
-        assert soup.find('span', class_='area') is not None
+        assert soup.find("span", class_="bedrooms") is not None
+        assert soup.find("span", class_="bathrooms") is not None
+        assert soup.find("span", class_="area") is not None
 
 
 @pytest.mark.unit
@@ -176,32 +176,35 @@ class TestDataProcessing:
 
         assert isinstance(result, pd.DataFrame)
         assert len(result) > 0
-        assert 'id' in result.columns
-        assert 'title' in result.columns
+        assert "id" in result.columns
+        assert "title" in result.columns
 
     def test_data_validation(self, mock_config_manager):
         """Test validation of scraped property data."""
         processor = DataProcessor(mock_config_manager)
 
         # Create invalid data
-        invalid_data = pd.DataFrame({
-            'id': [1, 2, 3],
-            # Missing required columns
-        })
+        invalid_data = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                # Missing required columns
+            }
+        )
 
         # Should validate required fields
         # Implementation may vary
-        assert 'id' in invalid_data.columns
+        assert "id" in invalid_data.columns
 
 
 @pytest.mark.unit
 class TestErrorHandling:
     """Test error handling in Zonaprop scraping."""
 
-    @patch('renta.ingestion.requests.get')
+    @patch("renta.ingestion.requests.get")
     def test_network_error_handling(self, mock_get, mock_config_manager):
         """Test handling of network errors."""
         import requests
+
         mock_get.side_effect = requests.exceptions.ConnectionError("Network error")
 
         scraper = ZonapropScraper(mock_config_manager)
@@ -209,7 +212,7 @@ class TestErrorHandling:
         with pytest.raises((ScrapingError, requests.exceptions.ConnectionError)):
             scraper.scrape_search_results("https://www.zonaprop.com.ar/test.html")
 
-    @patch('renta.ingestion.requests.get')
+    @patch("renta.ingestion.requests.get")
     def test_cloudflare_detection(self, mock_get, mock_config_manager):
         """Test detection and handling of Cloudflare protection."""
         # Mock Cloudflare challenge response
@@ -239,12 +242,7 @@ class TestErrorHandling:
         """Test handling of invalid URLs."""
         scraper = ZonapropScraper(mock_config_manager)
 
-        invalid_urls = [
-            "",
-            "not-a-url",
-            "http://",
-            "ftp://invalid.com"
-        ]
+        invalid_urls = ["", "not-a-url", "http://", "ftp://invalid.com"]
 
         for url in invalid_urls:
             # Should validate URLs
@@ -260,7 +258,8 @@ class TestErrorHandling:
 
         # Should handle gracefully
         from bs4 import BeautifulSoup
-        soup = BeautifulSoup(empty_html, 'html.parser')
-        cards = soup.find_all('div', class_='posting-card')
+
+        soup = BeautifulSoup(empty_html, "html.parser")
+        cards = soup.find_all("div", class_="posting-card")
 
         assert len(cards) == 0

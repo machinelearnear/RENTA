@@ -19,6 +19,7 @@ import os
 import warnings
 from pathlib import Path
 
+
 def show_legal_notice():
     """Display legal notice for RENTA usage."""
     notice = """
@@ -40,16 +41,16 @@ def show_legal_notice():
     ║                                                                              ║
     ╚══════════════════════════════════════════════════════════════════════════════╝
     """
-    
+
     # Check if user has acknowledged the notice
-    ack_file = Path.home() / '.renta' / 'legal_notice_acknowledged'
-    
+    ack_file = Path.home() / ".renta" / "legal_notice_acknowledged"
+
     if not ack_file.exists():
         print(notice)
         print("\nTo suppress this notice in future sessions, set environment variable:")
         print("export RENTA_LEGAL_NOTICE_ACKNOWLEDGED=true")
         print("\nOr create file: ~/.renta/legal_notice_acknowledged")
-        
+
         # Create acknowledgment file if directory exists
         if ack_file.parent.exists():
             try:
@@ -57,18 +58,23 @@ def show_legal_notice():
             except:
                 pass  # Ignore errors creating acknowledgment file
 
+
 def get_legal_notice_text():
     """Get the legal notice text for programmatic access."""
     try:
         import importlib.resources
-        with importlib.resources.open_text('renta.data', 'legal_notice.md') as f:
+
+        with importlib.resources.open_text("renta.data", "legal_notice.md") as f:
             return f.read()
     except:
-        return "Legal notice not available. Please see LEGAL_COMPLIANCE.md in the project repository."
+        return (
+            "Legal notice not available. Please see LEGAL_COMPLIANCE.md in the project repository."
+        )
+
 
 # Show legal notice on import unless suppressed
-if not os.getenv('RENTA_LEGAL_NOTICE_ACKNOWLEDGED'):
-    ack_file = Path.home() / '.renta' / 'legal_notice_acknowledged'
+if not os.getenv("RENTA_LEGAL_NOTICE_ACKNOWLEDGED"):
+    ack_file = Path.home() / ".renta" / "legal_notice_acknowledged"
     if not ack_file.exists():
         show_legal_notice()
 
@@ -125,7 +131,7 @@ __all__ = [
     "RealEstateAnalyzer",
     "ConfigManager",
     "RentaError",
-    "ConfigurationError", 
+    "ConfigurationError",
     "AirbnbDataError",
     "ScrapingError",
     "ZonapropAntiBotError",
@@ -133,7 +139,7 @@ __all__ = [
     "AIServiceConfigurationError",
     "ExportFormatError",
     "AirbnbIngester",
-    "ZonapropScraper", 
+    "ZonapropScraper",
     "DataProcessor",
     "ExchangeRateProvider",
     "SpatialMatcher",

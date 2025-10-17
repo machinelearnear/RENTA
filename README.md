@@ -1,9 +1,13 @@
-# RENTA – Real Estate Network and Trend Analyzer
+<div align="center">
+  <img src="assets/logo.png" alt="RENTA Logo" width="800">
 
-[![PyPI version](https://badge.fury.io/py/renta.svg)](https://badge.fury.io/py/renta)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](https://renta.readthedocs.io)
+  # Real Estate Network and Trend Analyzer
+
+  [![PyPI version](https://badge.fury.io/py/renta.svg)](https://badge.fury.io/py/renta)
+  [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+  [![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](https://renta.readthedocs.io)
+</div>
 
 RENTA is a Python library for real estate investment analysis in Buenos Aires. It combines Airbnb market data, Zonaprop listings, geospatial enrichment, and AWS Bedrock summaries to deliver investment-ready datasets.
 

@@ -21,6 +21,31 @@ RENTA is a Python library for real estate investment analysis in Buenos Aires. I
 
 ## Installation
 
+### Environment Setup (Recommended)
+
+For development and testing, it's recommended to use a virtual environment with uv:
+
+```bash
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create a new environment with Python 3.12+
+uv venv renta-env --python 3.12
+
+# Activate the environment
+source renta-env/bin/activate  # On macOS/Linux
+# or
+renta-env\Scripts\activate     # On Windows
+
+# Install RENTA in development mode
+uv pip install -e .
+
+# Or install from PyPI
+uv pip install renta
+```
+
+### Standard Installation
+
 ```bash
 pip install renta
 ```

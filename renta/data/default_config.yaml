@@ -14,6 +14,9 @@ airbnb:
     occupancy_thresholds:
       high: 14  # nights per month
       medium: 7
+  processing:
+    remove_outliers: true
+    outlier_sigma: 3.0
 
 zonaprop:
   scraping:

@@ -66,6 +66,21 @@
           },
           "required": ["radius_km", "min_nights_threshold", "min_review_score", "occupancy_thresholds"],
           "additionalProperties": false
+        },
+        "processing": {
+          "type": "object",
+          "properties": {
+            "remove_outliers": {
+              "type": "boolean",
+              "description": "Enable automatic removal of extreme Airbnb price outliers"
+            },
+            "outlier_sigma": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Standard deviation threshold used to detect Airbnb price outliers"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "required": ["matching"],

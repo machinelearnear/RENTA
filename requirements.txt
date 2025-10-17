@@ -31,3 +31,7 @@ structlog==24.4.0
 
 # Progress bars
 tqdm==4.67.1
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0

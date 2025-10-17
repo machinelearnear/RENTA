@@ -10,8 +10,9 @@ import os
 import re
 import time
 import random
+from datetime import date
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
@@ -958,13 +959,45 @@ class DataProcessor:
         """
         self.config = config
         self.exchange_provider = ExchangeRateProvider(config)
+        self._historical_rate_cache: Dict[str, Optional[float]] = {}
 
         # Processing options
         self.keep_intermediates = config.get("debug.keep_intermediates", False)
+        self.remove_airbnb_outliers = config.get("airbnb.processing.remove_outliers", True)
+        self.airbnb_outlier_sigma = config.get("airbnb.processing.outlier_sigma", 3.0)
 
         # Cache directory for processed data
         self.cache_dir = Path(config.get("data.cache_dir", "~/.renta/cache")).expanduser()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def load_airbnb_data(self, file_paths: Dict[str, str]) -> pd.DataFrame:
+        """Load Airbnb data from downloaded CSV files.
+
+        Args:
+            file_paths: Dictionary mapping file type to local file path
+
+        Returns:
+            Combined Airbnb DataFrame
+
+        Raises:
+            AirbnbDataError: If loading fails
+        """
+        try:
+            # Load listings data (main dataset)
+            if "listings" not in file_paths:
+                raise AirbnbDataError("Missing listings file in downloaded data")
+            
+            listings_df = pd.read_csv(file_paths["listings"], compression='gzip')
+            
+            # For now, we'll focus on the listings data
+            # Reviews and calendar data can be added later for more advanced analysis
+            return listings_df
+            
+        except Exception as e:
+            raise AirbnbDataError(
+                f"Failed to load Airbnb data: {e}",
+                details={"error_type": type(e).__name__, "file_paths": file_paths}
+            )
 
     def process_airbnb_listings(self, raw_data: pd.DataFrame) -> pd.DataFrame:
         """Clean and normalize Airbnb data.
@@ -981,9 +1014,18 @@ class DataProcessor:
         try:
             df = raw_data.copy()
 
-            # Validate required columns
-            required_columns = ["id", "latitude", "longitude", "room_type", "price"]
-            missing_columns = [col for col in required_columns if col not in df.columns]
+            # Validate required columns (check for either raw or processed column names)
+            base_required_columns = ["id", "latitude", "longitude", "room_type"]
+            
+            # Check for price column (either raw 'price' or processed 'price_usd_per_night')
+            has_price = "price" in df.columns or "price_usd_per_night" in df.columns
+            
+            print(f"DEBUG: Available columns: {list(df.columns)}")
+            print(f"DEBUG: Has price: {has_price}")
+            
+            missing_columns = [col for col in base_required_columns if col not in df.columns]
+            if not has_price:
+                missing_columns.append("price or price_usd_per_night")
             if missing_columns:
                 raise AirbnbDataError(
                     f"Missing required columns in Airbnb data: {missing_columns}",
@@ -1002,6 +1044,9 @@ class DataProcessor:
             # Clean room types
             df = self._clean_room_types(df)
 
+            # Normalize bathrooms and beds to numeric values
+            df = self._clean_bathrooms_and_beds(df)
+
             # Handle missing values
             df = self._handle_missing_values(df, "airbnb")
 
@@ -1010,6 +1055,10 @@ class DataProcessor:
 
             # Create consistent schema
             df = self._normalize_airbnb_schema(df)
+
+            # Optionally remove extreme price outliers
+            if self.remove_airbnb_outliers:
+                df = self._remove_price_outliers(df)
 
             return df
 
@@ -1131,16 +1180,103 @@ class DataProcessor:
 
     def _convert_airbnb_prices(self, df: pd.DataFrame) -> pd.DataFrame:
         """Convert Airbnb prices to USD."""
-        if "price" in df.columns:
-            # Clean price strings (remove $ and convert to numeric)
-            if df["price"].dtype == "object":
-                df["price"] = df["price"].str.replace("$", "").str.replace(",", "")
-                df["price"] = pd.to_numeric(df["price"], errors="coerce")
+        if "price" not in df.columns:
+            return df
 
-            # Assume prices are in USD (InsideAirbnb typically provides USD prices)
-            df["price_usd_per_night"] = df["price"]
+        # Preserve original string values and create numeric ARS price column
+        price_numeric = (
+            df["price"]
+            .astype(str)
+            .str.replace(r"[^\d.,]", "", regex=True)
+            .str.replace(",", "")
+        )
+        df["price_ars_per_night"] = pd.to_numeric(price_numeric, errors="coerce")
+
+        # Ensure last_scraped exists and is datetime for rate lookup
+        if "last_scraped" in df.columns:
+            df["last_scraped"] = pd.to_datetime(df["last_scraped"], errors="coerce")
+
+        unique_dates: Iterable[date] = []
+        if "last_scraped" in df.columns:
+            unique_dates = sorted(
+                {ts.date() for ts in df["last_scraped"].dropna() if isinstance(ts, pd.Timestamp)}
+            )
+
+        rates_by_date = self._get_historical_ars_usd_rates(unique_dates)
+
+        fallback_multiplier: Optional[float] = None
+        fallback_ars_per_usd: Optional[float] = None
+        try:
+            fallback_multiplier = self.exchange_provider.get_rate("ARS", "USD")
+            if fallback_multiplier not in (None, 0):
+                fallback_ars_per_usd = 1.0 / fallback_multiplier
+        except AirbnbDataError as exc:
+            logger.warning(
+                "Failed to obtain fallback ARS/USD rate, USD conversion may be missing",
+                error=str(exc),
+            )
+
+        def resolve_rate(ts: Optional[pd.Timestamp]) -> Optional[float]:
+            if isinstance(ts, pd.Timestamp) and not pd.isna(ts):
+                rate = rates_by_date.get(ts.date())
+                if rate:
+                    return rate
+            return fallback_ars_per_usd
+
+        if "last_scraped" in df.columns:
+            fx_rates = df["last_scraped"].apply(resolve_rate)
+        else:
+            fx_rates = pd.Series(fallback_ars_per_usd, index=df.index)
+
+        df["fx_rate_ars_per_usd"] = pd.to_numeric(fx_rates, errors="coerce")
+        df.loc[df["fx_rate_ars_per_usd"] <= 0, "fx_rate_ars_per_usd"] = pd.NA
+
+        # Convert to USD (ARS price divided by ARS per USD rate)
+        df["price_usd_per_night"] = df["price_ars_per_night"] / df["fx_rate_ars_per_usd"]
 
         return df
+
+    def _get_historical_ars_usd_rates(self, dates: Iterable[date]) -> Dict[date, Optional[float]]:
+        """Fetch ARS per USD historical rates for the provided dates."""
+        rates: Dict[date, Optional[float]] = {}
+
+        for day in dates:
+            cache_key = day.isoformat()
+            if cache_key in self._historical_rate_cache:
+                cached_rate = self._historical_rate_cache[cache_key]
+                if cached_rate is not None:
+                    rates[day] = cached_rate
+                continue
+
+            try:
+                rate = self._fetch_ars_usd_rate_for_date(day)
+                self._historical_rate_cache[cache_key] = rate
+                if rate is not None:
+                    rates[day] = rate
+            except Exception as exc:
+                self._historical_rate_cache[cache_key] = None
+                logger.warning(
+                    "Failed to fetch historical ARS/USD rate",
+                    date=cache_key,
+                    error=str(exc),
+                )
+
+        return rates
+
+    def _fetch_ars_usd_rate_for_date(self, day: date) -> Optional[float]:
+        """Retrieve ARS per USD rate for a specific day using XE tables."""
+        url = f"https://www.xe.com/currencytables/?from=ARS&date={day:%Y-%m-%d}"
+        tables = pd.read_html(url)
+        if not tables:
+            return None
+
+        table = tables[0]
+        usd_row = table[table["Currency"] == "USD"]
+        if usd_row.empty:
+            return None
+
+        rate = pd.to_numeric(usd_row["ARS per unit"], errors="coerce").iloc[0]
+        return float(rate) if not pd.isna(rate) else None
 
     def _convert_zonaprop_prices(self, df: pd.DataFrame) -> pd.DataFrame:
         """Convert Zonaprop prices to USD."""
@@ -1173,6 +1309,21 @@ class DataProcessor:
 
         return df
 
+    def _clean_bathrooms_and_beds(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Convert bathrooms and beds columns to numeric values."""
+        if "bathrooms_text" in df.columns:
+            numeric = df["bathrooms_text"].astype(str).str.extract(r"(\d+\.?\d*)")
+            df["bathrooms"] = pd.to_numeric(numeric[0], errors="coerce")
+            df = df.drop(columns=["bathrooms_text"])
+
+        if "bathrooms" in df.columns:
+            df["bathrooms"] = pd.to_numeric(df["bathrooms"], errors="coerce")
+
+        if "beds" in df.columns:
+            df["beds"] = pd.to_numeric(df["beds"], errors="coerce")
+
+        return df
+
     def _clean_text_fields(self, df: pd.DataFrame) -> pd.DataFrame:
         """Clean text fields (titles, addresses, etc.)."""
         text_columns = ["title", "address"]
@@ -1191,12 +1342,8 @@ class DataProcessor:
     def _handle_missing_values(self, df: pd.DataFrame, data_type: str) -> pd.DataFrame:
         """Handle missing values based on data type and business rules."""
         if data_type == "airbnb":
-            # For Airbnb, we need coordinates and price
-            # Remove rows without essential data
-            essential_columns = ["latitude", "longitude", "price_usd_per_night"]
-            for col in essential_columns:
-                if col in df.columns:
-                    df = df.dropna(subset=[col])
+            # Do not drop rows; retain full dataset for downstream indexing
+            return df
 
         elif data_type == "zonaprop":
             # For Zonaprop, we need at least ID and some price info
@@ -1207,16 +1354,31 @@ class DataProcessor:
 
     def _validate_airbnb_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Validate Airbnb data quality."""
-        # Remove invalid prices (negative or extremely high)
-        if "price_usd_per_night" in df.columns:
-            valid_price = (df["price_usd_per_night"] > 0) & (df["price_usd_per_night"] < 10000)
-            df = df[valid_price]
-
-        # Remove duplicate listings
         if "id" in df.columns:
             df = df.drop_duplicates(subset=["id"], keep="first")
 
         return df
+
+    def _remove_price_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Drop listings with extreme prices using z-score filtering."""
+        price_col = "price_usd_per_night"
+        if price_col not in df.columns:
+            return df
+
+        prices = pd.to_numeric(df[price_col], errors="coerce")
+        if prices.isna().all():
+            return df
+
+        mean = prices.mean()
+        std = prices.std(ddof=0)
+        if std == 0 or pd.isna(std):
+            return df
+
+        threshold = self.airbnb_outlier_sigma or 3.0
+        z_scores = (prices - mean).abs() / std
+        filtered_df = df[z_scores <= threshold]
+
+        return filtered_df
 
     def _validate_zonaprop_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Validate Zonaprop data quality."""
@@ -1239,16 +1401,21 @@ class DataProcessor:
         expected_schema = {
             "id": str,
             "listing_url": str,
+            "last_scraped": "datetime",
             "latitude": float,
             "longitude": float,
             "room_type": str,
+            "price_ars_per_night": float,
             "price_usd_per_night": float,
+            "fx_rate_ars_per_usd": float,
             "beds": float,
             "bathrooms": float,
             "review_score_rating": float,
             "review_score_location": float,
             "review_score_value": float,
             "neighbourhood": str,
+            "last_review": "datetime",
+            "estimated_nights_booked_l30d": float,
         }
 
         # Ensure all columns exist
@@ -1266,8 +1433,11 @@ class DataProcessor:
             elif dtype == str:
                 df[col] = df[col].astype(str)
                 df.loc[df[col] == "nan", col] = None
+            elif dtype == "datetime":
+                df[col] = pd.to_datetime(df[col], errors="coerce")
 
         # Add derived fields
+        df["estimated_nights_booked_l30d"] = self._estimate_nights_booked(df)
         df["estimated_nights_booked"] = self._estimate_occupancy_category(df)
 
         return df
@@ -1314,17 +1484,32 @@ class DataProcessor:
         This is a simplified heuristic. Real implementation would use
         calendar availability data and booking patterns.
         """
-        # Default to 'medium' occupancy
-        occupancy = pd.Series(["medium"] * len(df), index=df.index)
+        if "estimated_nights_booked_l30d" in df.columns:
+            nights = pd.to_numeric(df["estimated_nights_booked_l30d"], errors="coerce").fillna(0)
+            occupancy = pd.Series("low", index=df.index)
+            occupancy.loc[nights > 14] = "high"
+            occupancy.loc[(nights >= 7) & (nights <= 14)] = "medium"
+            return occupancy
 
-        # High occupancy indicators: high review count, good ratings
+        # Fallback heuristic if estimated nights not available
+        occupancy = pd.Series("medium", index=df.index)
         if "number_of_reviews" in df.columns and "review_score_rating" in df.columns:
             high_occupancy = (df["number_of_reviews"] > 50) & (df["review_score_rating"] > 4.5)
             occupancy.loc[high_occupancy] = "high"
-
-        # Low occupancy indicators: few reviews, poor ratings
         if "number_of_reviews" in df.columns:
             low_occupancy = df["number_of_reviews"] < 5
             occupancy.loc[low_occupancy] = "low"
-
         return occupancy
+
+    def _estimate_nights_booked(self, df: pd.DataFrame) -> pd.Series:
+        """Estimate total nights booked in the last 30 days based on review cadence."""
+        if "number_of_reviews_l30d" in df.columns:
+            reviews = pd.to_numeric(df["number_of_reviews_l30d"], errors="coerce").fillna(0)
+        elif "reviews_per_month" in df.columns:
+            reviews = pd.to_numeric(df["reviews_per_month"], errors="coerce").fillna(0) * (30.0 / 30.0)
+        else:
+            reviews = pd.Series(0, index=df.index)
+
+        estimated_nights = (reviews / 0.50) * 3.0
+        estimated_nights = estimated_nights.clip(lower=0, upper=21)  # 70% occupancy cap
+        return estimated_nights

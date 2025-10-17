@@ -289,6 +289,9 @@ class RealEstateAnalyzer:
         Raises:
             ConfigurationError: If configuration loading or validation fails
         """
+        # Prepare a fallback logger early so we can report initialization issues
+        self.logger = logger.bind(component="RealEstateAnalyzer", initializing=True)
+
         with OperationTimer("RealEstateAnalyzer initialization", logger, config_path=config_path):
             try:
                 # Load and validate configuration
@@ -334,13 +337,13 @@ class RealEstateAnalyzer:
 
                 # Initialize components with progress tracking
                 components = [
-                    ("AirbnbIngester", lambda: AirbnbIngester(self.config)),
-                    ("ZonapropScraper", lambda: ZonapropScraper(self.config)),
-                    ("DataProcessor", lambda: DataProcessor(self.config)),
-                    ("SpatialMatcher", lambda: SpatialMatcher(self.config)),
-                    ("EnrichmentEngine", lambda: EnrichmentEngine(self.config)),
-                    ("AIAnalyzer", lambda: AIAnalyzer(self.config, self.security_manager)),
-                    ("ExportManager", lambda: ExportManager(self.config)),
+                    ("airbnb_ingester", lambda: AirbnbIngester(self.config)),
+                    ("zonaprop_scraper", lambda: ZonapropScraper(self.config)),
+                    ("data_processor", lambda: DataProcessor(self.config)),
+                    ("spatial_matcher", lambda: SpatialMatcher(self.config)),
+                    ("enrichment_engine", lambda: EnrichmentEngine(self.config)),
+                    ("ai_analyzer", lambda: AIAnalyzer(self.config, self.security_manager)),
+                    ("export_manager", lambda: ExportManager(self.config)),
                 ]
 
                 progress = ProgressTracker(
@@ -350,7 +353,7 @@ class RealEstateAnalyzer:
                 for name, factory in components:
                     self.logger.debug(f"Initializing {name}")
                     component = factory()
-                    setattr(self, f"_{name.lower()}", component)
+                    setattr(self, f"_{name}", component)
                     progress.update()
 
                 # State management
@@ -372,7 +375,8 @@ class RealEstateAnalyzer:
                 )
 
             except Exception as e:
-                self.logger.error("Failed to initialize RealEstateAnalyzer", error=str(e))
+                fallback_logger = getattr(self, "logger", logger)
+                fallback_logger.error("Failed to initialize RealEstateAnalyzer", error=str(e))
                 if isinstance(e, (ConfigurationError, RentaError)):
                     raise
                 raise ConfigurationError(
@@ -410,8 +414,11 @@ class RealEstateAnalyzer:
                 downloaded_files = self._download_with_retry(force)
                 self.logger.info("Airbnb files downloaded", files=list(downloaded_files.keys()))
 
+                # Load the raw data
+                raw_data = self._data_processor.load_airbnb_data(downloaded_files)
+                
                 # Process the data
-                processed_data = self._data_processor.process_airbnb_data(downloaded_files)
+                processed_data = self._data_processor.process_airbnb_listings(raw_data)
 
                 # Validate processed data
                 self._validate_airbnb_data(processed_data)
@@ -467,7 +474,7 @@ class RealEstateAnalyzer:
                     properties_df = self._scrape_with_retry(search_url)
 
                 # Process and normalize the data
-                processed_properties = self._data_processor.process_zonaprop_data(properties_df)
+                processed_properties = self._data_processor.process_zonaprop_listings(properties_df)
 
                 # Validate scraped data
                 self._validate_property_data(processed_properties)
@@ -862,13 +869,23 @@ class RealEstateAnalyzer:
         if data is None or data.empty:
             raise AirbnbDataError("Airbnb data is empty or None")
 
-        required_columns = ["id", "latitude", "longitude", "price"]
+        required_columns = ["id", "latitude", "longitude"]
         missing_columns = [col for col in required_columns if col not in data.columns]
         if missing_columns:
             raise AirbnbDataError(
                 f"Airbnb data missing required columns: {missing_columns}",
                 details={
                     "missing_columns": missing_columns,
+                    "available_columns": list(data.columns),
+                },
+            )
+
+        price_columns = ["price_usd_per_night", "price"]
+        if not any(col in data.columns for col in price_columns):
+            raise AirbnbDataError(
+                "Airbnb data missing required price column",
+                details={
+                    "required_price_columns": price_columns,
                     "available_columns": list(data.columns),
                 },
             )

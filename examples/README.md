@@ -2,6 +2,18 @@
 
 This directory contains example scripts and notebooks demonstrating various RENTA usage patterns.
 
+## Environment Setup
+
+Before running any examples, make sure you have the RENTA environment activated:
+
+```bash
+# Activate the environment
+source renta-env/bin/activate
+
+# For Jupyter notebooks, you may also need to install the kernel
+python -m ipykernel install --user --name=renta-env --display-name="RENTA Environment"
+```
+
 ## Quick Start Examples
 
 - **[basic_usage.py](basic_usage.py)** - Simple end-to-end analysis pipeline

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/machinelearnear/RENTA/main/assets/logo.png" alt="RENTA Logo" width="200">
+  <img src="https://raw.githubusercontent.com/machinelearnear/RENTA/main/assets/logo.png" alt="RENTA Logo" width="314">
 
   # Real Estate Network and Trend Analyzer
 

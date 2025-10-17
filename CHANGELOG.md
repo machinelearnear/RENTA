@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-10-17
+
 ### Added
-- Initial project structure and core interfaces
-- Exception hierarchy rooted at `RentaError`
-- Base abstract classes for extensibility
-- Package metadata and dependency configuration
+- Professional logo and branding
+- Assets folder for static resources
+- Comprehensive test suite covering all core features
+- CI/CD pipeline with GitHub Actions
+- Publishing guides and checklists
+
+### Changed
+- Updated README with centered logo and improved branding
+- Improved exception handling with proper logging
 
 ## [0.1.0] - 2024-10-15
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "renta"
-version = "0.1.0"
+version = "0.1.1"
 description = "Real Estate Network and Trend Analyzer - A Python library for real estate investment analysis in Buenos Aires"
 readme = "README.md"
 license = "MIT"

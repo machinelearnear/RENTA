@@ -10,7 +10,7 @@ Users are responsible for ensuring compliance with all applicable laws,
 regulations, and terms of service. See LEGAL_COMPLIANCE.md for detailed guidance.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "RENTA Development Team"
 __email__ = "contact@renta.dev"
 __license__ = "MIT"

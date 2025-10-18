@@ -130,8 +130,6 @@ zonaprop:
     use_playwright: false  # Use cloudscraper instead
 ```
 
-See `PLAYWRIGHT_IMPLEMENTATION.md` for detailed configuration options.
-
 ## Troubleshooting
 
 - **Playwright not installed**: Run `playwright install chromium` to install browser.
@@ -140,8 +138,6 @@ See `PLAYWRIGHT_IMPLEMENTATION.md` for detailed configuration options.
 - **Zonaprop blocked with cloudscraper**: Switch to Playwright (`use_playwright: true`) or use `html_path="saved_results.html"`.
 - **Bedrock errors**: Verify credentials with `aws sts get-caller-identity` and confirm model access.
 - **Schema validation failures**: Run `RealEstateAnalyzer(config_path="config.yaml")` to surface detailed errors.
-
-For Playwright-specific troubleshooting, see `PLAYWRIGHT_IMPLEMENTATION.md`.
 
 ## Security and Compliance
 

@@ -14,7 +14,7 @@ RENTA is a Python library for real estate investment analysis in Buenos Aires. I
 ## Features
 
 - Download and normalize Airbnb datasets from InsideAirbnb with freshness caching.
-- Scrape or ingest Zonaprop listings, capturing pricing, engagement, and location data.
+- **Reliable Zonaprop scraping** with Playwright-based Cloudflare bypass (new in v0.2.0).
 - Match properties to nearby Airbnb listings with configurable spatial filters.
 - Generate Claude Sonnet 4.5 summaries in Argentine Spanish through AWS Bedrock.
 - Export enriched results to pandas, CSV, or JSON with consistent schemas.
@@ -40,15 +40,24 @@ renta-env\Scripts\activate     # On Windows
 # Install RENTA in development mode
 uv pip install -e .
 
+# Install Playwright browsers (required for Zonaprop scraping)
+playwright install chromium
+
 # Or install from PyPI
 uv pip install renta
+playwright install chromium
 ```
 
 ### Standard Installation
 
 ```bash
 pip install renta
+
+# Install Playwright browsers (required for Zonaprop scraping)
+playwright install chromium
 ```
+
+> **Note**: RENTA now uses Playwright by default for Zonaprop scraping to reliably bypass Cloudflare protection. This requires ~130MB for Chromium browser installation.
 
 ## Quick Start
 
@@ -91,6 +100,13 @@ airbnb:
   matching:
     radius_km: 0.3
     min_nights_threshold: 7
+zonaprop:
+  scraping:
+    use_playwright: true  # Enabled by default for reliable scraping
+  playwright:
+    headless: false  # Visible browser works better with Cloudflare
+    cloudflare_wait_seconds: 10
+    page_load_delay_seconds: 3
 aws:
   region: "us-east-1"
 logging:
@@ -99,12 +115,33 @@ logging:
 
 Load with `RealEstateAnalyzer(config_path="config.yaml")` or set `RENTA_CONFIG=/path/config.yaml`. Configuration is validated against `renta/schemas/config_schema.json`.
 
+### Zonaprop Scraping Methods
+
+RENTA supports two scraping approaches:
+
+1. **Playwright (Default & Recommended)**: Uses browser automation with stealth techniques to bypass Cloudflare. More reliable but slower.
+2. **Cloudscraper (Legacy)**: HTTP-based scraping. Faster but often blocked by Cloudflare.
+
+To switch methods:
+
+```yaml
+zonaprop:
+  scraping:
+    use_playwright: false  # Use cloudscraper instead
+```
+
+See `PLAYWRIGHT_IMPLEMENTATION.md` for detailed configuration options.
+
 ## Troubleshooting
 
-- Download issues: call `analyzer.download_airbnb_data(force=True)`.
-- Zonaprop blocked: use `html_path="saved_results.html"` with previously saved HTML.
-- Bedrock errors: verify credentials with `aws sts get-caller-identity` and confirm model access.
-- Schema validation failures: run `RealEstateAnalyzer(config_path="config.yaml")` to surface detailed errors.
+- **Playwright not installed**: Run `playwright install chromium` to install browser.
+- **Cloudflare still blocking**: Increase `cloudflare_wait_seconds` in config or ensure `headless: false`.
+- **Download issues**: Call `analyzer.download_airbnb_data(force=True)`.
+- **Zonaprop blocked with cloudscraper**: Switch to Playwright (`use_playwright: true`) or use `html_path="saved_results.html"`.
+- **Bedrock errors**: Verify credentials with `aws sts get-caller-identity` and confirm model access.
+- **Schema validation failures**: Run `RealEstateAnalyzer(config_path="config.yaml")` to surface detailed errors.
+
+For Playwright-specific troubleshooting, see `PLAYWRIGHT_IMPLEMENTATION.md`.
 
 ## Security and Compliance
 

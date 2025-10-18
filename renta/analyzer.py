@@ -873,12 +873,28 @@ class RealEstateAnalyzer:
         Raises:
             ScrapingError: If scraping fails after all retries
         """
+        use_playwright = self.config.get("zonaprop.scraping.use_playwright", False)
 
-        @with_retry(self.retry_config, logger_instance=self.logger)
-        def _scrape():
-            return self._zonaprop_scraper.scrape_search_results(search_url)
+        if use_playwright:
+            # Use Playwright-based scraper (more reliable, bypasses Cloudflare)
+            from .utils.async_scraper_wrapper import scrape_zonaprop_sync
 
-        return _scrape()
+            self.logger.info("Using Playwright scraper for Cloudflare bypass", url=search_url)
+
+            @with_retry(self.retry_config, logger_instance=self.logger)
+            def _scrape():
+                return scrape_zonaprop_sync(search_url, self.config)
+
+            return _scrape()
+        else:
+            # Use legacy cloudscraper (faster but often blocked)
+            self.logger.info("Using cloudscraper (legacy method)", url=search_url)
+
+            @with_retry(self.retry_config, logger_instance=self.logger)
+            def _scrape():
+                return self._zonaprop_scraper.scrape_search_results(search_url)
+
+            return _scrape()
 
     def _validate_airbnb_data(self, data: pd.DataFrame) -> None:
         """Validate Airbnb data integrity.

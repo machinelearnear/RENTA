@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-10-18
+
+### Added
+- playwright-based zonaprop scraper with cloudflare bypass
+- response interception for clean json data extraction
+- async wrapper for unified scraping interface
+- comprehensive playwright configuration options
+
+### Changed
+- playwright is now the default scraping method for zonaprop
+- updated readme with installation and configuration instructions
+- added playwright and playwright-stealth dependencies
+
+### Fixed
+- reliable cloudflare bypass for zonaprop scraping
+- improved success rate for property data collection
+
 ## [0.1.1] - 2025-10-17
 
 ### Added

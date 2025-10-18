@@ -12,7 +12,6 @@ from typing import Any, Dict, Optional, Union
 import yaml
 import jsonschema
 from jsonschema import ValidationError
-import importlib.resources
 
 from .exceptions import ConfigurationError
 
@@ -161,13 +160,14 @@ class ConfigManager:
 
     def _load_schema(self) -> None:
         """Load JSON schema for configuration validation."""
+        schema_path = Path(__file__).resolve().parent / "schemas" / "config_schema.json"
         try:
-            with importlib.resources.open_text("renta.schemas", "config_schema.json") as f:
+            with open(schema_path, "r", encoding="utf-8") as f:
                 self._schema = json.load(f)
         except Exception as e:
             raise ConfigurationError(
                 f"Failed to load configuration schema: {e}",
-                details={"error_type": type(e).__name__},
+                details={"error_type": type(e).__name__, "path": str(schema_path)},
             ) from e
 
     def _load_default_config(self) -> Dict[str, Any]:
@@ -179,13 +179,14 @@ class ConfigManager:
         Raises:
             ConfigurationError: If default config cannot be loaded
         """
+        config_path = Path(__file__).resolve().parent / "data" / "default_config.yaml"
         try:
-            with importlib.resources.open_text("renta.data", "default_config.yaml") as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 return yaml.safe_load(f)
         except Exception as e:
             raise ConfigurationError(
                 f"Failed to load default configuration: {e}",
-                details={"error_type": type(e).__name__},
+                details={"error_type": type(e).__name__, "path": str(config_path)},
             ) from e
 
     def _load_user_config(self, config_path: str) -> Dict[str, Any]:

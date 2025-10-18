@@ -27,6 +27,9 @@ processed/
 *~
 .kiro/
 
+# Claude Code
+CLAUDE.md
+
 # GitHub (allow workflows)
 .github/*
 !.github/workflows/

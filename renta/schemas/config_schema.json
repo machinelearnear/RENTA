@@ -92,6 +92,10 @@
         "scraping": {
           "type": "object",
           "properties": {
+            "use_playwright": {
+              "type": "boolean",
+              "description": "Use Playwright for scraping (more reliable but slower)"
+            },
             "rate_limit_seconds": {
               "type": "number",
               "minimum": 0.1,
@@ -155,6 +159,79 @@
             }
           },
           "required": ["rate_limit_seconds", "max_retries", "timeout_seconds", "user_agents"],
+          "additionalProperties": false
+        },
+        "playwright": {
+          "type": "object",
+          "properties": {
+            "headless": {
+              "type": "boolean",
+              "description": "Run browser in headless mode (visible browser works better with Cloudflare)"
+            },
+            "browser_timeout_seconds": {
+              "type": "number",
+              "minimum": 1,
+              "description": "Browser operation timeout in seconds"
+            },
+            "navigation_timeout_seconds": {
+              "type": "number",
+              "minimum": 1,
+              "description": "Page navigation timeout in seconds"
+            },
+            "cloudflare_wait_seconds": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Wait time for Cloudflare challenge to complete"
+            },
+            "page_load_delay_seconds": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Delay after page load for API calls to complete"
+            },
+            "retry_delay_base_seconds": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Base delay for retry logic in seconds"
+            },
+            "viewport": {
+              "type": "object",
+              "properties": {
+                "width": {
+                  "type": "integer",
+                  "minimum": 800,
+                  "description": "Browser viewport width"
+                },
+                "height": {
+                  "type": "integer",
+                  "minimum": 600,
+                  "description": "Browser viewport height"
+                }
+              },
+              "required": ["width", "height"],
+              "additionalProperties": false
+            },
+            "user_agent": {
+              "type": "string",
+              "description": "User agent string for browser"
+            },
+            "locale": {
+              "type": "string",
+              "description": "Browser locale setting"
+            },
+            "timezone": {
+              "type": "string",
+              "description": "Browser timezone setting"
+            },
+            "reuse_browser_session": {
+              "type": "boolean",
+              "description": "Reuse browser session across multiple page scrapes"
+            },
+            "session_max_pages": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Maximum pages to scrape before closing and reopening browser"
+            }
+          },
           "additionalProperties": false
         }
       },

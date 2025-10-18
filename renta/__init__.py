@@ -62,9 +62,8 @@ def show_legal_notice():
 def get_legal_notice_text():
     """Get the legal notice text for programmatic access."""
     try:
-        import importlib.resources
-
-        with importlib.resources.open_text("renta.data", "legal_notice.md") as f:
+        notice_path = Path(__file__).resolve().parent / "data" / "legal_notice.md"
+        with open(notice_path, "r", encoding="utf-8") as f:
             return f.read()
     except:
         return (

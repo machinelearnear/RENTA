@@ -10,11 +10,13 @@ import os
 import re
 import time
 import random
+import unicodedata
 from datetime import date
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 import pandas as pd
 from tqdm import tqdm
@@ -307,8 +309,57 @@ class ZonapropScraper:
             config: ConfigManager instance with zonaprop scraping settings
         """
         self.config = config
-        self.rate_limit = config.get("zonaprop.scraping.rate_limit_seconds", 5)
-        self.max_retries = config.get("zonaprop.scraping.max_retries", 3)
+        self.rate_limit = float(config.get("zonaprop.scraping.rate_limit_seconds", 30))
+        self.max_retries = int(config.get("zonaprop.scraping.max_retries", 3))
+        self.timeout = float(config.get("zonaprop.scraping.timeout_seconds", 30))
+        self.cloudflare_delay = float(
+            config.get("zonaprop.scraping.cloudflare_delay_seconds", 30)
+        )
+        self.max_pages = config.get("zonaprop.scraping.max_pages")
+        if self.max_pages is not None:
+            try:
+                self.max_pages = int(self.max_pages)
+                if self.max_pages <= 0:
+                    self.max_pages = None
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Invalid Zonaprop max_pages config, ignoring",
+                    value=self.max_pages,
+                )
+                self.max_pages = None
+        self.fetch_listing_views = bool(
+            config.get("zonaprop.scraping.fetch_listing_views", False)
+        )
+        max_view_requests_cfg = config.get(
+            "zonaprop.scraping.max_view_requests", 100
+        )
+        if max_view_requests_cfg is None:
+            self.max_view_requests = None
+        else:
+            try:
+                self.max_view_requests = int(max_view_requests_cfg)
+                if self.max_view_requests <= 0:
+                    self.max_view_requests = None
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Invalid Zonaprop max_view_requests config, ignoring",
+                    value=max_view_requests_cfg,
+                )
+                self.max_view_requests = None
+        listing_delay_cfg = config.get(
+            "zonaprop.scraping.listing_detail_delay_seconds", None
+        )
+        if listing_delay_cfg is None:
+            self.listing_detail_delay = max(self.rate_limit, 5.0)
+        else:
+            try:
+                self.listing_detail_delay = float(listing_delay_cfg)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Invalid Zonaprop listing detail delay config, falling back",
+                    value=listing_delay_cfg,
+                )
+                self.listing_detail_delay = max(self.rate_limit, 5.0)
         self.user_agents = config.get(
             "zonaprop.scraping.user_agents",
             [
@@ -318,11 +369,48 @@ class ZonapropScraper:
             ],
         )
 
-        self.session = requests.Session()
-        self.last_request_time = 0
+        if not self.user_agents:
+            raise ScrapingError("Zonaprop user agent list cannot be empty")
+
+        self.base_url = "https://www.zonaprop.com.ar"
+        self.session: cloudscraper.CloudScraper = self._create_session()
+        self.current_user_agent = self.session.headers.get("User-Agent")
+        self.last_request_time = 0.0
+        self.last_detail_request_time = 0.0
 
         # Allowed domains for scraping (security measure)
         self.allowed_domains = ["zonaprop.com.ar", "www.zonaprop.com.ar"]
+
+    def _create_session(self) -> cloudscraper.CloudScraper:
+        """Create a new cloudscraper session with randomized headers."""
+        user_agent = random.choice(self.user_agents)
+        logger.debug(
+            "Creating Zonaprop scraper session", user_agent=user_agent, delay=self.cloudflare_delay
+        )
+        scraper = cloudscraper.create_scraper(
+            delay=max(self.cloudflare_delay, 0),
+            browser={
+                "browser": "chrome",
+                "platform": "windows",
+                "desktop": True,
+            },
+        )
+        scraper.headers.update(
+            {
+                "User-Agent": user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+            }
+        )
+        self.current_user_agent = user_agent
+        return scraper
+
+    def _refresh_session(self) -> None:
+        """Recreate the cloudscraper session, typically after anti-bot detection."""
+        logger.debug("Refreshing Zonaprop session after blockage or inactivity")
+        self.session = self._create_session()
 
     def _validate_url(self, url: str) -> None:
         """Validate URL for security before making requests.
@@ -375,14 +463,58 @@ class ZonapropScraper:
             ScrapingError: If scraping fails for other reasons
         """
         try:
-            # Validate URL for security
             self._validate_url(search_url)
 
-            # Get search results page
-            html_content = self._fetch_page(search_url)
+            # Fetch first page and extract properties/state
+            html_content = self._fetch_page(search_url, bucket="search")
+            properties_map: Dict[str, Dict] = {}
+            page_properties, state = self._extract_properties_from_html(html_content, search_url)
+            for record in page_properties:
+                property_id = record.get("id")
+                if not property_id:
+                    continue
+                properties_map[property_id] = record
 
-            # Parse property listings
-            properties = self._parse_search_results(html_content, search_url)
+            total_pages = self._extract_total_pages(html_content, state)
+            if self.max_pages is not None:
+                total_pages = max(1, min(total_pages, self.max_pages))
+
+            logger.info(
+                "Fetched Zonaprop first page",
+                url=search_url,
+                properties_found=len(properties_map),
+                total_pages=total_pages,
+            )
+
+            # Iterate through remaining pages if available
+            for page_number in range(2, total_pages + 1):
+                page_url = self._build_page_url(search_url, page_number)
+                self._validate_url(page_url)
+                page_html = self._fetch_page(page_url, bucket="search")
+                page_records, _ = self._extract_properties_from_html(page_html, page_url)
+
+                for record in page_records:
+                    property_id = record.get("id")
+                    if not property_id:
+                        continue
+                    if property_id in properties_map:
+                        properties_map[property_id] = self._merge_property_records(
+                            properties_map[property_id], record
+                        )
+                    else:
+                        properties_map[property_id] = record
+
+                logger.debug(
+                    "Fetched Zonaprop page",
+                    page=page_number,
+                    url=page_url,
+                    cumulative_properties=len(properties_map),
+                )
+
+            properties = list(properties_map.values())
+
+            if self.fetch_listing_views and properties:
+                properties = self._populate_listing_views(properties)
 
             return self._normalize_property_data(properties)
 
@@ -412,19 +544,30 @@ class ZonapropScraper:
             html_path = Path(html_path)
 
             if html_path.is_file():
-                # Single file
                 with open(html_path, "r", encoding="utf-8") as f:
                     html_content = f.read()
-                properties = self._parse_search_results(html_content, str(html_path))
+                properties, _ = self._extract_properties_from_html(html_content, str(html_path))
 
             elif html_path.is_dir():
-                # Directory of HTML files
-                properties = []
-                for html_file in html_path.glob("*.html"):
+                properties_by_id: Dict[str, Dict] = {}
+                for html_file in sorted(html_path.glob("*.html")):
                     with open(html_file, "r", encoding="utf-8") as f:
                         html_content = f.read()
-                    file_properties = self._parse_search_results(html_content, str(html_file))
-                    properties.extend(file_properties)
+                    file_properties, _ = self._extract_properties_from_html(
+                        html_content, str(html_file)
+                    )
+                    for record in file_properties:
+                        property_id = record.get("id")
+                        if not property_id:
+                            continue
+                        if property_id in properties_by_id:
+                            properties_by_id[property_id] = self._merge_property_records(
+                                properties_by_id[property_id], record
+                            )
+                        else:
+                            properties_by_id[property_id] = record
+
+                properties = list(properties_by_id.values())
             else:
                 raise ScrapingError(
                     f"HTML path does not exist: {html_path}", details={"path": str(html_path)}
@@ -440,11 +583,12 @@ class ZonapropScraper:
                 details={"path": str(html_path), "error_type": type(e).__name__},
             )
 
-    def _fetch_page(self, url: str) -> str:
-        """Fetch a web page with rate limiting and anti-bot detection.
+    def _fetch_page(self, url: str, *, bucket: str = "search") -> str:
+        """Fetch a web page with cloudscraper to bypass Cloudflare protection.
 
         Args:
             url: URL to fetch
+            bucket: Rate-limit bucket ('search' or 'detail')
 
         Returns:
             HTML content as string
@@ -453,253 +597,591 @@ class ZonapropScraper:
             ZonapropAntiBotError: If anti-bot protection detected
             ScrapingError: If request fails
         """
-        # Validate URL before fetching
         self._validate_url(url)
 
-        # Rate limiting
-        time_since_last = time.time() - self.last_request_time
-        if time_since_last < self.rate_limit:
-            time.sleep(self.rate_limit - time_since_last)
+        last_exception: Optional[Exception] = None
 
-        for attempt in range(self.max_retries):
+        for attempt in range(1, self.max_retries + 1):
             try:
-                # Random user agent
-                headers = {
-                    "User-Agent": random.choice(self.user_agents),
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
-                    "Accept-Encoding": "gzip, deflate",
-                    "Connection": "keep-alive",
-                    "Upgrade-Insecure-Requests": "1",
-                }
+                self._respect_rate_limit(bucket=bucket)
+                response = self.session.get(url, timeout=self.timeout)
+                status_code = response.status_code
+                content = response.text
 
-                response = self.session.get(url, headers=headers, timeout=30)
-                self.last_request_time = time.time()
-
-                # Check for anti-bot protection
-                if response.status_code == 403:
-                    raise ZonapropAntiBotError(
-                        details={"status_code": 403, "url": url, "attempt": attempt + 1}
-                    )
-
-                if response.status_code >= 400:
-                    if attempt == self.max_retries - 1:
+                if response.status_code == 200:
+                    if self._is_cloudflare_block(content):
                         raise ZonapropAntiBotError(
-                            f"HTTP {response.status_code} after {self.max_retries} attempts",
-                            details={"status_code": response.status_code, "url": url},
+                            details={
+                                "status_code": status_code,
+                                "url": url,
+                                "attempt": attempt,
+                                "reason": "cloudflare_block_page",
+                            }
                         )
-                    continue
+                    self._record_request_timestamp(bucket)
+                    return content
 
-                # Check for Cloudflare or other anti-bot indicators
-                content_lower = response.text.lower()
-                anti_bot_indicators = [
-                    "cloudflare",
-                    "checking your browser",
-                    "please wait while we verify",
-                    "ddos protection",
-                    "security check",
-                ]
-
-                if any(indicator in content_lower for indicator in anti_bot_indicators):
-                    raise ZonapropAntiBotError(
-                        "Anti-bot protection detected in page content",
-                        details={"url": url, "indicators_found": True},
+                if status_code in (403, 429, 503):
+                    last_exception = ZonapropAntiBotError(
+                        details={
+                            "status_code": status_code,
+                            "url": url,
+                            "attempt": attempt,
+                            "user_agent": self.current_user_agent,
+                        }
+                    )
+                    logger.warning(
+                        "Zonaprop responded with anti-bot status code",
+                        url=url,
+                        status_code=status_code,
+                        attempt=attempt,
+                    )
+                    self._refresh_session()
+                else:
+                    last_exception = ScrapingError(
+                        f"Unexpected status code {status_code} while fetching {url}",
+                        details={"status_code": status_code, "url": url},
                     )
 
-                return response.text
-
-            except requests.RequestException as e:
-                if attempt == self.max_retries - 1:
-                    raise ScrapingError(
-                        f"Failed to fetch {url} after {self.max_retries} attempts: {e}",
-                        details={"url": url, "error_type": type(e).__name__},
-                    )
-
-                # Wait before retry
-                time.sleep(2**attempt)
-
-        raise ScrapingError(f"Failed to fetch {url} after all retries")
-
-    def _parse_search_results(self, html_content: str, source: str) -> List[Dict]:
-        """Parse property listings from HTML content.
-
-        Args:
-            html_content: HTML content to parse
-            source: Source identifier (URL or file path)
-
-        Returns:
-            List of property dictionaries
-        """
-        soup = BeautifulSoup(html_content, "html.parser")
-        properties = []
-
-        # Zonaprop typically uses specific CSS classes for property listings
-        # This is a simplified parser - real implementation would need to handle
-        # Zonaprop's actual HTML structure
-
-        # Look for property cards/listings
-        property_elements = soup.find_all(
-            ["div", "article"], class_=re.compile(r"(property|listing|card)", re.I)
-        )
-
-        if not property_elements:
-            # Fallback: look for common patterns
-            property_elements = soup.find_all("div", attrs={"data-id": True})
-
-        for element in property_elements:
-            try:
-                property_data = self._extract_property_details(element)
-                if property_data:
-                    property_data["source"] = source
-                    properties.append(property_data)
-            except Exception as e:
-                # Log warning but continue processing
+            except cloudscraper.exceptions.CloudflareChallengeError as e:
+                last_exception = ZonapropAntiBotError(
+                    "Zonaprop anti-bot challenge could not be solved automatically.",
+                    details={"url": url, "attempt": attempt, "error": str(e)},
+                )
                 logger.warning(
-                    "Failed to extract property details",
-                    element_id=element.get("id") or element.get("data-id"),
+                    "Cloudflare challenge error",
+                    url=url,
+                    attempt=attempt,
                     error=str(e),
                 )
+                self._refresh_session()
+
+            except ZonapropAntiBotError as e:
+                last_exception = e
+                self._refresh_session()
+
+            except requests.exceptions.RequestException as e:
+                last_exception = e
+                logger.warning(
+                    "Network error while fetching Zonaprop page",
+                    url=url,
+                    attempt=attempt,
+                    error=str(e),
+                )
+                self._refresh_session()
+
+            if attempt < self.max_retries:
+                retry_delay = self._compute_retry_delay(attempt)
+                logger.debug(
+                    "Retrying Zonaprop request",
+                    url=url,
+                    attempt=attempt,
+                    delay=round(retry_delay, 2),
+                    bucket=bucket,
+                )
+                time.sleep(retry_delay)
+            else:
+                break
+
+        if isinstance(last_exception, ZonapropAntiBotError):
+            raise last_exception
+
+        if isinstance(last_exception, requests.exceptions.RequestException):
+            status_code = (
+                getattr(last_exception.response, "status_code", None)
+                if hasattr(last_exception, "response")
+                else None
+            )
+            raise ScrapingError(
+                f"Failed to fetch {url}: {last_exception}",
+                details={
+                    "url": url,
+                    "status_code": status_code,
+                    "error_type": type(last_exception).__name__,
+                },
+            ) from last_exception
+
+        if isinstance(last_exception, ScrapingError):
+            raise last_exception
+
+        raise ScrapingError(f"Failed to fetch {url} after {self.max_retries} attempts")
+
+    def _respect_rate_limit(self, *, bucket: str) -> None:
+        """Sleep as needed to respect configured rate limits."""
+        if bucket == "detail":
+            base_delay = max(self.listing_detail_delay, 0.0)
+            last_time = self.last_detail_request_time
+        else:
+            base_delay = max(self.rate_limit, 0.0)
+            last_time = self.last_request_time
+
+        if base_delay <= 0:
+            return
+
+        elapsed = time.time() - last_time
+        remaining = base_delay - elapsed
+        if remaining > 0:
+            jitter_bound = 0.5 if base_delay < 5 else 1.5
+            sleep_time = remaining + random.uniform(0.2, jitter_bound)
+            logger.debug(
+                "Respecting Zonaprop rate limit",
+                bucket=bucket,
+                base_delay=base_delay,
+                sleep=round(sleep_time, 2),
+            )
+            time.sleep(max(sleep_time, 0))
+
+    def _record_request_timestamp(self, bucket: str) -> None:
+        """Update the timestamp for the last request in the given bucket."""
+        current_time = time.time()
+        if bucket == "detail":
+            self.last_detail_request_time = current_time
+        else:
+            self.last_request_time = current_time
+
+    @staticmethod
+    def _compute_retry_delay(attempt: int) -> float:
+        """Compute exponential backoff delay with jitter."""
+        base_delay = 2 ** max(0, attempt - 1)
+        jitter = random.uniform(0.5, 1.5)
+        return min(base_delay + jitter, 30.0)
+
+    @staticmethod
+    def _is_cloudflare_block(html_content: str) -> bool:
+        """Detect Cloudflare block/challenge pages."""
+        if not html_content:
+            return False
+
+        lowered = html_content.lower()
+        indicators = [
+            "just a moment",
+            "checking your browser",
+            "cf-browser-verification",
+            "cf-chl-bypass",
+            "cf-error",
+            "cf-challenge-running",
+            "cloudflare ray id",
+        ]
+        return any(indicator in lowered for indicator in indicators)
+
+    def _extract_properties_from_html(
+        self, html_content: str, source: str
+    ) -> Tuple[List[Dict], Optional[Dict]]:
+        """Extract properties and state dictionary from raw HTML."""
+        if self._is_cloudflare_block(html_content):
+            raise ZonapropAntiBotError(details={"url": source, "reason": "cloudflare_block"})
+
+        state = self._extract_preloaded_state(html_content, source)
+        properties = self._extract_properties_from_state(state, source)
+        return properties, state
+
+    def _extract_preloaded_state(self, html_content: str, source: str) -> Dict:
+        """Extract the window.__PRELOADED_STATE__ JSON payload."""
+        soup = BeautifulSoup(html_content, "html.parser")
+        script = soup.find("script", id="preloadedData")
+        if not script:
+            for candidate in soup.find_all("script"):
+                script_text = candidate.string or candidate.get_text()
+                if script_text and "__PRELOADED_STATE__" in script_text:
+                    script = candidate
+                    break
+
+        if not script:
+            raise ScrapingError(
+                "Failed to locate Zonaprop listing payload",
+                details={"source": source},
+            )
+
+        script_text = script.string or script.get_text()
+        if not script_text:
+            raise ScrapingError(
+                "Zonaprop listing payload script was empty",
+                details={"source": source},
+            )
+
+        match = re.search(
+            r"window\.__PRELOADED_STATE__\s*=\s*(\{.*?\})\s*;?",
+            script_text,
+            flags=re.DOTALL,
+        )
+        if not match:
+            raise ScrapingError(
+                "Failed to extract Zonaprop JSON payload",
+                details={"source": source},
+            )
+
+        json_candidate = match.group(1).strip()
+
+        try:
+            return json.loads(json_candidate)
+        except json.JSONDecodeError as exc:
+            raise ScrapingError(
+                "Failed to parse Zonaprop listing payload",
+                details={"source": source, "error": str(exc)},
+            ) from exc
+
+    def _extract_properties_from_state(self, state: Dict, source: str) -> List[Dict]:
+        """Convert Zonaprop state dictionary into property records."""
+        list_store = state.get("listStore") or {}
+        postings = (
+            list_store.get("listPostings")
+            or list_store.get("searchPostings")
+            or list_store.get("postings")
+        )
+
+        if isinstance(postings, dict):
+            postings_iterable = postings.values()
+        else:
+            postings_iterable = postings or []
+
+        properties: List[Dict] = []
+
+        for raw_posting in postings_iterable:
+            if not isinstance(raw_posting, dict):
                 continue
+            transformed = self._transform_property_record(raw_posting, source)
+            if transformed:
+                properties.append(transformed)
+
+        if not properties:
+            logger.warning("No Zonaprop postings extracted", source=source)
 
         return properties
 
-    def _extract_property_details(self, element) -> Optional[Dict]:
-        """Extract property details from a single listing element.
+    def _transform_property_record(self, raw: Dict, source: str) -> Optional[Dict]:
+        """Normalize a raw Zonaprop posting dictionary."""
+        property_id = (
+            raw.get("postingId")
+            or raw.get("id")
+            or raw.get("hash")
+            or raw.get("code")
+        )
+        if not property_id:
+            return None
 
-        Args:
-            element: BeautifulSoup element containing property data
+        listing_url = None
+        for candidate in (
+            raw.get("url"),
+            raw.get("canonicalUrl"),
+            raw.get("permalink"),
+            raw.get("sharingUrl"),
+        ):
+            if candidate:
+                listing_url = urljoin(self.base_url, candidate)
+                break
 
-        Returns:
-            Dictionary with property details or None if extraction fails
-        """
+        data: Dict[str, Optional[float]] = {
+            "id": str(property_id),
+            "title": raw.get("titlePlainText")
+            or raw.get("title")
+            or raw.get("postingTitle"),
+            "listing_url": listing_url,
+        }
+
+        data.update(self._extract_price_info(raw))
+
+        location = raw.get("postingLocation") or {}
+        address_info = location.get("postingAddress") or {}
+        data["address"] = (
+            address_info.get("formattedAddress")
+            or address_info.get("address")
+            or location.get("address")
+            or location.get("neighborhoodName")
+        )
+
+        geolocation = {}
+        posting_geo = location.get("postingGeolocation")
+        if isinstance(posting_geo, dict):
+            geolocation = posting_geo.get("geolocation") or {}
+        if not geolocation and isinstance(location.get("geolocation"), dict):
+            geolocation = location.get("geolocation") or {}
+
+        data["latitude"] = self._to_float(geolocation.get("latitude"))
+        data["longitude"] = self._to_float(geolocation.get("longitude"))
+
+        feature_map = self._collect_feature_map(raw)
+
+        data["rooms"] = self._to_float(
+            raw.get("rooms")
+            or feature_map.get("ambientes")
+            or feature_map.get("dormitorios")
+        )
+
+        data["bathrooms"] = self._to_float(
+            raw.get("bathrooms")
+            or feature_map.get("banos")
+            or feature_map.get("bano")
+        )
+
+        surface_candidate = (
+            raw.get("surfaceMeters")
+            or raw.get("surface")
+            or feature_map.get("superficie_total")
+            or feature_map.get("superficie_cubierta")
+            or feature_map.get("sup_total")
+        )
+        data["surface_m2"] = self._to_float(surface_candidate)
+
+        stats = raw.get("stats") or raw.get("postingStats") or {}
+        views_value = (
+            stats.get("usersViewsPerDay")
+            or stats.get("viewsPerDay")
+            or stats.get("usersViews")
+        )
+        data["views_per_day"] = self._to_float(views_value)
+
+        return data
+
+    def _collect_feature_map(self, raw: Dict) -> Dict[str, str]:
+        """Collect feature entries from different sections into a normalized map."""
+        feature_map: Dict[str, str] = {}
+
+        def _collect(container):
+            if isinstance(container, dict):
+                for entry in container.values():
+                    if isinstance(entry, dict):
+                        label = entry.get("label") or entry.get("name")
+                        value = entry.get("value") or entry.get("formattedValue")
+                        if label and value is not None:
+                            feature_map[self._slugify_feature_key(label)] = str(value)
+
+        _collect(raw.get("mainFeatures"))
+
+        general_features = raw.get("generalFeatures")
+        if isinstance(general_features, dict):
+            for group in general_features.values():
+                _collect(group)
+
+        characteristics = raw.get("characteristics")
+        if isinstance(characteristics, list):
+            for item in characteristics:
+                if isinstance(item, dict):
+                    label = item.get("name") or item.get("label")
+                    value = item.get("value") or item.get("formattedValue")
+                    if label and value is not None:
+                        feature_map[self._slugify_feature_key(label)] = str(value)
+
+        return feature_map
+
+    @staticmethod
+    def _slugify_feature_key(label: str) -> str:
+        """Convert feature labels into normalized dictionary keys."""
+        normalized = unicodedata.normalize("NFKD", label)
+        normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        normalized = normalized.lower()
+        normalized = re.sub(r"[^a-z0-9]+", "_", normalized)
+        return normalized.strip("_")
+
+    @staticmethod
+    def _to_float(value: Optional[object]) -> Optional[float]:
+        """Convert a value into float if possible."""
+        if value is None:
+            return None
+
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        text = str(value)
+        match = re.search(r"-?\d+(?:[.,]\d+)?", text)
+        if not match:
+            return None
+
+        normalized = match.group(0).replace(".", "").replace(",", ".")
         try:
-            property_data = {}
+            return float(normalized)
+        except ValueError:
+            return None
 
-            # Extract ID (from data attributes or URL)
-            prop_id = element.get("data-id") or element.get("id")
-            if not prop_id:
-                # Try to extract from link
-                link = element.find("a", href=True)
-                if link:
-                    href = link["href"]
-                    id_match = re.search(r"/(\d+)/?", href)
-                    if id_match:
-                        prop_id = id_match.group(1)
+    def _extract_price_info(self, raw: Dict) -> Dict[str, Optional[float]]:
+        """Extract USD and ARS prices from a posting."""
+        price_usd: Optional[float] = None
+        price_ars: Optional[float] = None
 
-            if not prop_id:
+        def _assign(amount: Optional[float], currency: Optional[str]) -> None:
+            nonlocal price_usd, price_ars
+            if amount is None or currency is None:
+                return
+            currency = currency.upper()
+            if currency in {"USD", "US$", "U$S", "DOLARES", "DÓLARES"}:
+                if price_usd is None:
+                    price_usd = amount
+            elif currency in {"ARS", "AR$", "PESOS", "PESOS ARGENTINOS"}:
+                if price_ars is None:
+                    price_ars = amount
+
+        for operation in raw.get("priceOperationTypes") or []:
+            for price in operation.get("prices") or []:
+                amount = self._to_float(
+                    price.get("amount")
+                    or price.get("value")
+                    or price.get("formattedAmount")
+                )
+                currency = price.get("currency")
+                if isinstance(currency, dict):
+                    currency = currency.get("id") or currency.get("symbol")
+                elif isinstance(currency, str) and currency.startswith("$"):
+                    currency = "ARS"
+                _assign(amount, currency)
+
+        if price_usd is None or price_ars is None:
+            for key in ("priceString", "mainPrice", "price"):
+                text = raw.get(key)
+                if isinstance(text, str):
+                    if price_usd is None:
+                        usd_match = re.search(r"usd\s*([\d.,]+)", text, flags=re.I)
+                        if usd_match:
+                            price_usd = self._to_float(usd_match.group(1))
+                    if price_ars is None:
+                        ars_match = re.search(r"\$\s*([\d.,]+)", text)
+                        if ars_match:
+                            price_ars = self._to_float(ars_match.group(1))
+
+        return {"price_usd": price_usd, "price_ars": price_ars}
+
+    @staticmethod
+    def _merge_property_records(existing: Dict, new: Dict) -> Dict:
+        """Merge two property dictionaries, filling missing values."""
+        for key, value in new.items():
+            if key == "id":
+                continue
+            if value in (None, "", []):
+                continue
+            if key not in existing or existing[key] in (None, "", []):
+                existing[key] = value
+        return existing
+
+    def _extract_total_pages(
+        self, html_content: str, state: Optional[Dict] = None
+    ) -> int:
+        """Determine total number of pages available for the search."""
+        if state:
+            list_store = state.get("listStore") or {}
+
+            potential_keys = [
+                ("metadata", "paging", "totalPages"),
+                ("metadata", "totalPages"),
+                ("totalPages",),
+            ]
+
+            for path in potential_keys:
+                node = list_store
+                try:
+                    for key in path:
+                        node = node[key]
+                except (KeyError, TypeError):
+                    continue
+
+                if isinstance(node, (int, float)) and node >= 1:
+                    return int(node)
+                if isinstance(node, str) and node.isdigit():
+                    return int(node)
+
+            search_metadata = state.get("search", {}).get("metadata", {})
+            total = search_metadata.get("totalPages")
+            if isinstance(total, (int, float)) and total >= 1:
+                return int(total)
+
+        match = re.search(r'"totalPages"\s*:\s*(\d+)', html_content)
+        if match:
+            return max(1, int(match.group(1)))
+
+        return 1
+
+    def _build_page_url(self, search_url: str, page_number: int) -> str:
+        """Build the URL for a given results page."""
+        if page_number <= 1:
+            return search_url
+
+        parsed = urlparse(search_url)
+        path = parsed.path or ""
+
+        if re.search(r"-pagina-\d+", path):
+            new_path = re.sub(
+                r"-pagina-\d+(\.html)?", f"-pagina-{page_number}.html", path
+            )
+        elif path.endswith(".html"):
+            new_path = re.sub(r"\.html$", f"-pagina-{page_number}.html", path)
+        else:
+            base_path = path.rstrip("/")
+            new_path = f"{base_path}-pagina-{page_number}.html"
+
+        rebuilt = f"{parsed.scheme}://{parsed.netloc}{new_path}"
+
+        if parsed.query:
+            rebuilt = f"{rebuilt}?{parsed.query}"
+        if parsed.fragment:
+            rebuilt = f"{rebuilt}#{parsed.fragment}"
+
+        return rebuilt
+
+    def _populate_listing_views(self, properties: List[Dict]) -> List[Dict]:
+        """Fetch listing detail pages to enrich with view metrics."""
+        logger.info(
+            "Fetching Zonaprop listing view metrics",
+            total_properties=len(properties),
+            max_requests=self.max_view_requests,
+        )
+
+        processed = 0
+        for property_data in properties:
+            if self.max_view_requests is not None and processed >= self.max_view_requests:
+                logger.info(
+                    "Reached maximum listing view requests",
+                    processed=processed,
+                    limit=self.max_view_requests,
+                )
+                break
+
+            listing_url = property_data.get("listing_url")
+            if not listing_url:
+                continue
+
+            try:
+                detail_html = self._fetch_page(listing_url, bucket="detail")
+            except ZonapropAntiBotError:
+                logger.warning(
+                    "Listing detail blocked by Cloudflare",
+                    property_id=property_data.get("id"),
+                    url=listing_url,
+                )
+                continue
+            except ScrapingError as exc:
+                logger.warning(
+                    "Failed to fetch listing detail page",
+                    property_id=property_data.get("id"),
+                    url=listing_url,
+                    error=str(exc),
+                )
+                continue
+
+            views = self._extract_views_from_listing(detail_html)
+            if views is not None:
+                property_data["views_per_day"] = views
+            processed += 1
+
+        return properties
+
+    @staticmethod
+    def _extract_views_from_listing(html_content: str) -> Optional[float]:
+        """Extract user views metric from a listing detail page."""
+        if not html_content:
+            return None
+
+        match = re.search(r"usersViewsPerDay\s*=\s*(\d+(?:\.\d+)?)", html_content)
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
                 return None
 
-            property_data["id"] = prop_id
+        match = re.search(r"usersViews\s*=\s*(\d+)", html_content)
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                return None
 
-            # Extract title
-            title_elem = element.find(["h1", "h2", "h3", "h4"], class_=re.compile(r"title", re.I))
-            if not title_elem:
-                title_elem = element.find("a", href=True)
-            property_data["title"] = title_elem.get_text(strip=True) if title_elem else None
-
-            # Extract price (look for currency symbols and numbers)
-            price_text = element.get_text()
-
-            # ARS price
-            ars_match = re.search(r"\$\s*([\d.,]+)", price_text)
-            if ars_match:
-                price_str = ars_match.group(1).replace(",", "").replace(".", "")
-                try:
-                    property_data["price_ars"] = float(price_str)
-                except ValueError:
-                    property_data["price_ars"] = None
-            else:
-                property_data["price_ars"] = None
-
-            # USD price
-            usd_match = re.search(r"USD?\s*([\d.,]+)", price_text, re.I)
-            if usd_match:
-                price_str = usd_match.group(1).replace(",", "")
-                try:
-                    property_data["price_usd"] = float(price_str)
-                except ValueError:
-                    property_data["price_usd"] = None
-            else:
-                property_data["price_usd"] = None
-
-            # Extract address
-            address_elem = element.find(
-                ["span", "div", "p"], class_=re.compile(r"(address|location|zona)", re.I)
-            )
-            property_data["address"] = address_elem.get_text(strip=True) if address_elem else None
-
-            # Extract coordinates (if available in data attributes or scripts)
-            lat = element.get("data-lat") or element.get("data-latitude")
-            lon = element.get("data-lon") or element.get("data-longitude")
-
-            if lat and lon:
-                try:
-                    property_data["latitude"] = float(lat)
-                    property_data["longitude"] = float(lon)
-                except ValueError:
-                    property_data["latitude"] = None
-                    property_data["longitude"] = None
-            else:
-                property_data["latitude"] = None
-                property_data["longitude"] = None
-
-            # Extract property metrics
-            metrics_text = element.get_text()
-
-            # Rooms
-            rooms_match = re.search(r"(\d+)\s*(amb|ambiente|habitacion)", metrics_text, re.I)
-            if rooms_match:
-                try:
-                    property_data["rooms"] = int(rooms_match.group(1))
-                except ValueError:
-                    property_data["rooms"] = None
-            else:
-                property_data["rooms"] = None
-
-            # Bathrooms
-            bath_match = re.search(r"(\d+(?:\.\d+)?)\s*(baño|bathroom)", metrics_text, re.I)
-            if bath_match:
-                try:
-                    property_data["bathrooms"] = float(bath_match.group(1))
-                except ValueError:
-                    property_data["bathrooms"] = None
-            else:
-                property_data["bathrooms"] = None
-
-            # Surface area
-            m2_match = re.search(r"(\d+(?:\.\d+)?)\s*m[²2]", metrics_text, re.I)
-            if m2_match:
-                try:
-                    property_data["surface_m2"] = float(m2_match.group(1))
-                except ValueError:
-                    property_data["surface_m2"] = None
-            else:
-                property_data["surface_m2"] = None
-
-            # Extract engagement metrics (views, favorites)
-            views_match = re.search(r"(\d+)\s*(vista|view)", metrics_text, re.I)
-            if views_match:
-                try:
-                    property_data["views_per_day"] = int(views_match.group(1))
-                except ValueError:
-                    property_data["views_per_day"] = None
-            else:
-                property_data["views_per_day"] = None
-
-            # Extract listing URL
-            link_elem = element.find("a", href=True)
-            if link_elem:
-                href = link_elem["href"]
-                if href.startswith("/"):
-                    href = "https://www.zonaprop.com.ar" + href
-                property_data["listing_url"] = href
-            else:
-                property_data["listing_url"] = None
-
-            return property_data
-
-        except Exception:
-            return None
+        return None
 
     def _normalize_property_data(self, properties: List[Dict]) -> pd.DataFrame:
         """Normalize property data into consistent DataFrame.

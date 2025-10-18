@@ -12,6 +12,53 @@ from pathlib import Path
 from renta.ingestion import ZonapropScraper, DataProcessor
 from renta.exceptions import ScrapingError, ZonapropAntiBotError
 
+SAMPLE_PRELOADED_HTML = """
+<html>
+  <head>
+    <script id="preloadedData">
+      window.__PRELOADED_STATE__ = {
+        "listStore": {
+          "listPostings": [
+            {
+              "postingId": "prop_123",
+              "titlePlainText": "Departamento en Palermo",
+              "url": "/propiedad-prop_123.html",
+              "priceOperationTypes": [
+                {
+                  "prices": [
+                    {"amount": 95000, "currency": {"id": "USD"}},
+                    {"amount": 85000000, "currency": {"id": "ARS"}}
+                  ]
+                }
+              ],
+              "postingLocation": {
+                "postingAddress": {"formattedAddress": "Palermo, CABA"},
+                "postingGeolocation": {"geolocation": {"latitude": -34.58, "longitude": -58.41}}
+              },
+              "rooms": 2,
+              "bathrooms": 1,
+              "surfaceMeters": 55,
+              "stats": {"usersViewsPerDay": 7}
+            }
+          ],
+          "metadata": {"paging": {"totalPages": 1}}
+        }
+      };
+    </script>
+  </head>
+  <body></body>
+</html>
+"""
+
+
+@pytest.fixture(autouse=True)
+def mock_cloudscraper_session():
+    """Ensure cloudscraper sessions are mocked for all tests."""
+    with patch("renta.ingestion.cloudscraper.create_scraper") as mock_factory:
+        session_mock = MagicMock()
+        mock_factory.return_value = session_mock
+        yield session_mock
+
 
 @pytest.mark.unit
 class TestZonapropScraper:
@@ -24,38 +71,25 @@ class TestZonapropScraper:
         assert scraper.config is not None
         assert hasattr(scraper, "logger")
 
-    @pytest.mark.network
-    @patch("renta.ingestion.requests.get")
-    def test_scrape_search_results(self, mock_get, mock_config_manager):
+    @patch.object(ZonapropScraper, "_fetch_page", return_value=SAMPLE_PRELOADED_HTML)
+    def test_scrape_search_results(self, mock_fetch_page, mock_config_manager):
         """Test scraping Zonaprop search results."""
-        # Mock HTML response
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.text = """
-        <html>
-            <body>
-                <div class="posting-card">
-                    <h2>Departamento en Palermo</h2>
-                    <span class="price">USD 120,000</span>
-                    <span class="bedrooms">2 amb</span>
-                </div>
-            </body>
-        </html>
-        """
-        mock_get.return_value = mock_response
-
         scraper = ZonapropScraper(mock_config_manager)
 
         # Test scraping (may need to adjust based on actual implementation)
         url = "https://www.zonaprop.com.ar/inmuebles-venta-palermo.html"
 
-        # This test validates that the scraper can be called
-        # Actual parsing logic may vary
-        try:
-            result = scraper.scrape_search_results(url)
-            assert isinstance(result, pd.DataFrame)
-        except NotImplementedError:
-            pytest.skip("Scraping method not fully implemented")
+        result = scraper.scrape_search_results(url)
+
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row["id"] == "prop_123"
+        assert row["price_usd"] == 95000
+        assert row["rooms"] == 2
+        assert row["bathrooms"] == 1
+        assert pytest.approx(row["latitude"], rel=1e-6) == -34.58
+        mock_fetch_page.assert_called_once_with(url, bucket="search")
 
     def test_parse_html_files(self, mock_config_manager, test_data_dir):
         """Test parsing from saved HTML files (fallback mode)."""
@@ -63,26 +97,13 @@ class TestZonapropScraper:
 
         # Create sample HTML file
         html_file = test_data_dir / "zonaprop_sample.html"
-        html_content = """
-        <html>
-            <body>
-                <div class="posting-card">
-                    <h2 class="posting-title">Departamento en Palermo</h2>
-                    <span class="price">USD 120,000</span>
-                    <div class="bedrooms">2 ambientes</div>
-                    <div class="area">65 m²</div>
-                </div>
-            </body>
-        </html>
-        """
-        html_file.write_text(html_content)
+        html_file.write_text(SAMPLE_PRELOADED_HTML)
 
-        # Test parsing
-        try:
-            result = scraper.parse_html_files(str(html_file))
-            assert isinstance(result, pd.DataFrame)
-        except (NotImplementedError, AttributeError):
-            pytest.skip("HTML parsing method not fully implemented")
+        result = scraper.parse_html_files(str(html_file))
+
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 1
+        assert "price_usd" in result.columns
 
     def test_antibot_detection(self, mock_config_manager):
         """Test detection of anti-bot protection."""
@@ -200,43 +221,36 @@ class TestDataProcessing:
 class TestErrorHandling:
     """Test error handling in Zonaprop scraping."""
 
-    @patch("renta.ingestion.requests.get")
-    def test_network_error_handling(self, mock_get, mock_config_manager):
+    def test_network_error_handling(self, mock_config_manager, mock_cloudscraper_session):
         """Test handling of network errors."""
         import requests
 
-        mock_get.side_effect = requests.exceptions.ConnectionError("Network error")
+        mock_cloudscraper_session.get.side_effect = requests.exceptions.ConnectionError(
+            "Network error"
+        )
 
         scraper = ZonapropScraper(mock_config_manager)
 
-        with pytest.raises((ScrapingError, requests.exceptions.ConnectionError)):
-            scraper.scrape_search_results("https://www.zonaprop.com.ar/test.html")
+        try:
+            with pytest.raises(ScrapingError):
+                scraper.scrape_search_results("https://www.zonaprop.com.ar/test.html")
+        finally:
+            mock_cloudscraper_session.get.side_effect = None
 
-    @patch("renta.ingestion.requests.get")
-    def test_cloudflare_detection(self, mock_get, mock_config_manager):
+    def test_cloudflare_detection(self, mock_config_manager, mock_cloudscraper_session):
         """Test detection and handling of Cloudflare protection."""
-        # Mock Cloudflare challenge response
-        mock_response = Mock()
+        mock_response = MagicMock()
         mock_response.status_code = 403
-        mock_response.text = """
-        <html>
-            <head><title>Just a moment...</title></head>
-            <body>Checking your browser...</body>
-        </html>
-        """
-        mock_get.return_value = mock_response
-
+        mock_response.text = "<html><body>Just a moment...</body></html>"
+        mock_cloudscraper_session.get.return_value = mock_response
         scraper = ZonapropScraper(mock_config_manager)
 
-        # Should detect Cloudflare
-        # Implementation may raise ZonapropAntiBotError or similar
         try:
             scraper.scrape_search_results("https://www.zonaprop.com.ar/test.html")
-        except (ZonapropAntiBotError, ScrapingError) as e:
-            # Expected behavior
+        except ZonapropAntiBotError:
             assert True
-        except NotImplementedError:
-            pytest.skip("Anti-bot detection not implemented")
+        finally:
+            mock_cloudscraper_session.get.reset_mock()
 
     def test_invalid_url_handling(self, mock_config_manager):
         """Test handling of invalid URLs."""

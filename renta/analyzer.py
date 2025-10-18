@@ -26,6 +26,7 @@ from .exceptions import (
     MatchingError,
     AIServiceConfigurationError,
     ExportFormatError,
+    ZonapropAntiBotError,
 )
 from .ingestion import AirbnbIngester, ZonapropScraper, DataProcessor
 from .spatial import SpatialMatcher, EnrichmentEngine
@@ -441,19 +442,20 @@ class RealEstateAnalyzer:
                 return processed_data.copy()
 
     @with_retry()
-    def scrape_zonaprop(self, search_url: str, *, html_path: Optional[str] = None) -> pd.DataFrame:
+    def scrape_zonaprop(self, search_url: str, *, html_path: Optional[str] = None, auto_download: bool = True) -> pd.DataFrame:
         """Scrape Zonaprop listings.
 
         Args:
             search_url: Zonaprop search URL to scrape
             html_path: Optional path to saved HTML files as fallback
+            auto_download: If True, automatically download HTML files when direct scraping fails
 
         Returns:
             Property listings as DataFrame
 
         Raises:
             ScrapingError: If scraping fails
-            ZonapropAntiBotError: If anti-bot protection is detected
+            ZonapropAntiBotError: If anti-bot protection is detected and auto_download is False
         """
         with OperationTimer(
             "Zonaprop scraping", self.logger, url=search_url, html_path=html_path
@@ -470,8 +472,28 @@ class RealEstateAnalyzer:
                     self.logger.info("Using HTML files for parsing", path=html_path)
                     properties_df = self._zonaprop_scraper.parse_html_files(html_path)
                 else:
-                    # Scrape from web with enhanced error handling
-                    properties_df = self._scrape_with_retry(search_url)
+                    # Try direct scraping first
+                    try:
+                        properties_df = self._scrape_with_retry(search_url)
+                    except ZonapropAntiBotError as e:
+                        if auto_download:
+                            self.logger.info("Direct scraping failed, attempting automatic HTML download fallback")
+                            try:
+                                from .utils.zonaprop_downloader import download_zonaprop_for_analyzer
+                                html_dir = download_zonaprop_for_analyzer(search_url)
+                                self.logger.info("HTML files downloaded, parsing from files", path=html_dir)
+                                properties_df = self._zonaprop_scraper.parse_html_files(html_dir)
+                            except Exception as download_error:
+                                self.logger.error("Automatic HTML download also failed", error=str(download_error))
+                                # Provide helpful guidance to the user
+                                from .utils.manual_download_guide import print_manual_download_instructions
+                                print_manual_download_instructions(search_url)
+                                raise e  # Re-raise original error
+                        else:
+                            # Provide helpful guidance to the user
+                            from .utils.manual_download_guide import print_manual_download_instructions
+                            print_manual_download_instructions(search_url)
+                            raise
 
                 # Process and normalize the data
                 processed_properties = self._data_processor.process_zonaprop_listings(properties_df)
@@ -709,17 +731,18 @@ class RealEstateAnalyzer:
         self.download_airbnb_data(force=force)
         return self
 
-    def with_properties(self, search_url: str, *, html_path: Optional[str] = None) -> pd.DataFrame:
+    def with_properties(self, search_url: str, *, html_path: Optional[str] = None, auto_download: bool = True) -> pd.DataFrame:
         """Scrape properties and return DataFrame for chaining.
 
         Args:
             search_url: Zonaprop search URL
             html_path: Optional path to saved HTML files
+            auto_download: If True, automatically download HTML files when direct scraping fails
 
         Returns:
             Properties DataFrame
         """
-        return self.scrape_zonaprop(search_url, html_path=html_path)
+        return self.scrape_zonaprop(search_url, html_path=html_path, auto_download=auto_download)
 
     # State management and utility methods
     def get_config(self) -> ConfigManager:

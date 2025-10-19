@@ -2,7 +2,12 @@
 Playwright-based scraper for Zonaprop with Cloudflare bypass.
 
 Uses Playwright + playwright-stealth to bypass Cloudflare protection and
-intercepts browser API calls to extract clean JSON property data.
+parses HTML content to extract __PRELOADED_STATE__ property data.
+
+Implements cookie-based authentication to bypass Cloudflare challenges:
+- User manually solves CAPTCHA once using cloudflare_auth tool
+- Cookies are saved and reused in automated sessions
+- Automatic cookie expiration detection and re-authentication prompts
 """
 
 import asyncio
@@ -18,6 +23,7 @@ from playwright_stealth import Stealth
 
 from .config import ConfigManager
 from .exceptions import ZonapropAntiBotError, ScrapingError
+from .utils.cloudflare_auth import CloudflareAuthManager
 
 
 logger = structlog.get_logger(__name__)
@@ -25,18 +31,25 @@ logger = structlog.get_logger(__name__)
 
 class ZonapropPlaywrightClient:
     """
-    Playwright-based scraper for Zonaprop with response interception.
+    Playwright-based scraper for Zonaprop with HTML parsing and cookie authentication.
 
     Uses Playwright + playwright-stealth to bypass Cloudflare protection and
-    intercepts browser API calls to extract clean JSON property data.
+    parses HTML content to extract window.__PRELOADED_STATE__ property data.
 
     Key Features:
-    - Cloudflare bypass using playwright-stealth
-    - Response interception for clean JSON extraction
+    - Cookie-based Cloudflare bypass (user solves CAPTCHA once, cookies are reused)
+    - HTML parsing to extract __PRELOADED_STATE__ from embedded JavaScript
     - Browser session reuse for performance
     - Pagination support
     - Comprehensive error handling and retry logic
     - Configurable via ConfigManager
+
+    Authentication:
+    Before using this scraper, run the authentication tool once:
+        python -m renta.utils.cloudflare_auth auth
+
+    This will open a browser for you to manually solve the Cloudflare challenge.
+    The cookies will be saved and reused automatically in subsequent scraping sessions.
     """
 
     def __init__(self, config: ConfigManager):
@@ -47,6 +60,9 @@ class ZonapropPlaywrightClient:
         """
         self.config = config
         self.base_url = "https://www.zonaprop.com.ar"
+
+        # Cloudflare authentication manager
+        self.auth_manager = CloudflareAuthManager(config)
 
         # Browser configuration
         self.headless = config.get("zonaprop.playwright.headless", False)
@@ -85,7 +101,6 @@ class ZonapropPlaywrightClient:
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
         self._playwright: Optional[Playwright] = None
-        self._intercepted_responses: List[Dict] = []
         self._session_active = False
         self._pages_scraped = 0
 
@@ -221,48 +236,153 @@ class ZonapropPlaywrightClient:
             self._session_active = True
 
     async def _launch_browser(self) -> None:
-        """Launch Playwright browser with anti-detection configuration."""
+        """Launch Playwright browser with enhanced anti-detection configuration."""
         self._playwright = await async_playwright().start()
+
+        # Enhanced browser arguments to bypass Cloudflare detection
+        browser_args = [
+            '--disable-blink-features=AutomationControlled',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-site-isolation-trials',
+            '--no-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-web-security',
+            '--disable-features=VizDisplayCompositor',
+            '--disable-background-networking',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-breakpad',
+            '--disable-client-side-phishing-detection',
+            '--disable-component-extensions-with-background-pages',
+            '--disable-default-apps',
+            '--disable-extensions',
+            '--disable-features=Translate',
+            '--disable-hang-monitor',
+            '--disable-ipc-flooding-protection',
+            '--disable-popup-blocking',
+            '--disable-prompt-on-repost',
+            '--disable-renderer-backgrounding',
+            '--disable-sync',
+            '--force-color-profile=srgb',
+            '--metrics-recording-only',
+            '--no-first-run',
+            '--password-store=basic',
+            '--use-mock-keychain',
+            '--enable-features=NetworkService,NetworkServiceInProcess',
+        ]
 
         self._browser = await self._playwright.chromium.launch(
             headless=self.headless,
-            args=[
-                '--disable-blink-features=AutomationControlled',
-                '--no-sandbox',
-                '--disable-dev-shm-usage',
-            ],
+            args=browser_args,
             timeout=self.browser_timeout * 1000
         )
 
-        logger.info("Playwright browser launched", headless=self.headless)
+        logger.info("Enhanced Playwright browser launched", headless=self.headless)
 
     async def _create_context(self) -> None:
-        """Create browser context with realistic fingerprint."""
+        """Create browser context with enhanced realistic fingerprint and load saved cookies."""
         self._context = await self._browser.new_context(
             viewport=self.viewport,
             user_agent=self.user_agent,
             locale=self.locale,
             timezone_id=self.timezone,
+            # Enhanced headers to appear more human
             extra_http_headers={
-                "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            }
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language": "es-AR,es;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Accept-Encoding": "gzip, deflate, br",
+                "DNT": "1",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Cache-Control": "max-age=0",
+            },
+            # Grant permissions to reduce suspicion
+            permissions=["geolocation", "notifications"],
+            # More realistic browser features
+            color_scheme="light",
+            reduced_motion="no-preference",
+            forced_colors="none",
+            # Realistic device properties
+            device_scale_factor=1,
+            is_mobile=False,
+            has_touch=False,
+            java_script_enabled=True,
         )
 
-        logger.debug("Browser context created", locale=self.locale)
+        # Load and apply saved Cloudflare cookies
+        if self.auth_manager.has_valid_cookies():
+            try:
+                await self.auth_manager.apply_cookies_to_context(self._context)
+                logger.info("Cloudflare cookies loaded successfully")
+            except Exception as e:
+                logger.warning("Failed to load cookies, may encounter Cloudflare challenge", error=str(e))
+        else:
+            logger.warning(
+                "No valid Cloudflare cookies found. "
+                "Run 'python -m renta.utils.cloudflare_auth auth' to authenticate."
+            )
+
+        logger.debug("Enhanced browser context created", locale=self.locale)
 
     async def _create_page(self) -> None:
-        """Create page and apply stealth evasions."""
+        """Create page with enhanced stealth evasions and property overrides."""
         self._page = await self._context.new_page()
 
-        # Apply playwright-stealth
+        # Apply playwright-stealth first
         stealth = Stealth()
         await stealth.apply_stealth_async(self._page)
+
+        # Additional JavaScript injections to mask automation
+        await self._page.add_init_script("""
+            // Override the navigator.webdriver property
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+
+            // Mock plugins
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5]
+            });
+
+            // Mock languages
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['es-AR', 'es', 'en-US', 'en']
+            });
+
+            // Override permissions
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                    Promise.resolve({ state: Notification.permission }) :
+                    originalQuery(parameters)
+            );
+
+            // Mock chrome property
+            window.chrome = {
+                runtime: {},
+                loadTimes: function() {},
+                csi: function() {},
+                app: {}
+            };
+
+            // Override toString methods to prevent detection
+            const originalToString = Function.prototype.toString;
+            Function.prototype.toString = function() {
+                if (this === window.navigator.permissions.query) {
+                    return 'function query() { [native code] }';
+                }
+                return originalToString.call(this);
+            };
+        """)
 
         # Set default timeouts
         self._page.set_default_timeout(self.navigation_timeout * 1000)
 
-        logger.debug("Page created with stealth evasions applied")
+        logger.debug("Page created with enhanced stealth evasions applied")
 
     async def _scrape_page(
         self,
@@ -271,7 +391,7 @@ class ZonapropPlaywrightClient:
         retry_count: int = 0
     ) -> Dict:
         """
-        Scrape a single page by intercepting API responses.
+        Scrape a single page by parsing HTML content.
 
         Args:
             page_url: URL to scrape
@@ -279,7 +399,7 @@ class ZonapropPlaywrightClient:
             retry_count: Current retry attempt
 
         Returns:
-            API response data as dictionary
+            __PRELOADED_STATE__ data as dictionary
 
         Raises:
             ZonapropAntiBotError: If Cloudflare blocks the request
@@ -288,34 +408,11 @@ class ZonapropPlaywrightClient:
         try:
             await self._ensure_browser_session()
 
-            # Clear previous intercepted responses
-            self._intercepted_responses.clear()
-
-            # Set up response interception
-            async def handle_response(response: Response):
-                try:
-                    # Check if this is the API endpoint we want
-                    if '/rplis-api/postings' in response.url and response.status == 200:
-                        # Extract JSON data
-                        data = await response.json()
-                        self._intercepted_responses.append(data)
-                        logger.debug(
-                            "Intercepted API response",
-                            url=response.url,
-                            status=response.status,
-                            has_data=bool(data)
-                        )
-                except Exception as e:
-                    logger.debug("Failed to parse response", error=str(e), url=response.url)
-
-            # Register response handler
-            self._page.on('response', handle_response)
-
             # Navigate to page
             logger.debug("Navigating to page", url=page_url, page=page_number)
             response = await self._page.goto(
                 page_url,
-                wait_until='domcontentloaded',
+                wait_until='load',  # Wait for full page load including JavaScript
                 timeout=self.navigation_timeout * 1000
             )
 
@@ -333,9 +430,25 @@ class ZonapropPlaywrightClient:
             # Wait for Cloudflare challenge to complete
             await asyncio.sleep(self.cloudflare_wait_seconds)
 
-            # Check page content for Cloudflare indicators
-            content = await self._page.content()
-            if self._is_cloudflare_block(content):
+            # Wait for __PRELOADED_STATE__ to be injected by JavaScript
+            logger.debug("Waiting for __PRELOADED_STATE__ to load", url=page_url)
+            try:
+                await self._page.wait_for_function(
+                    "window.__PRELOADED_STATE__ !== undefined",
+                    timeout=30000  # 30 second timeout for state to appear
+                )
+            except Exception as e:
+                logger.warning(
+                    "Timeout waiting for __PRELOADED_STATE__, attempting extraction anyway",
+                    url=page_url,
+                    error=str(e)
+                )
+
+            # Extract HTML content
+            html_content = await self._page.content()
+
+            # Check for Cloudflare indicators
+            if self._is_cloudflare_block(html_content):
                 raise ZonapropAntiBotError(
                     "Cloudflare challenge page detected",
                     details={
@@ -345,21 +458,20 @@ class ZonapropPlaywrightClient:
                     }
                 )
 
-            # Wait for API calls to complete
-            await asyncio.sleep(self.page_load_delay)
-
-            # Verify we intercepted responses
-            if not self._intercepted_responses:
-                raise ScrapingError(
-                    "No API responses intercepted",
-                    details={"url": page_url, "page": page_number}
-                )
+            # Parse __PRELOADED_STATE__ from HTML
+            state_data = self._extract_preloaded_state_from_html(html_content, page_url)
 
             # Update pages scraped counter
             self._pages_scraped += 1
 
-            # Return the first (and usually only) intercepted response
-            return self._intercepted_responses[0]
+            logger.debug(
+                "Successfully extracted state from HTML",
+                url=page_url,
+                page=page_number,
+                has_data=bool(state_data)
+            )
+
+            return state_data
 
         except ZonapropAntiBotError:
             if retry_count < self.max_retries:
@@ -557,6 +669,32 @@ class ZonapropPlaywrightClient:
                 f"Invalid scheme: {parsed.scheme}",
                 details={"url": url}
             )
+
+    def _extract_preloaded_state_from_html(self, html_content: str, source: str) -> Dict:
+        """
+        Extract window.__PRELOADED_STATE__ from HTML content.
+
+        Delegates to the ingestion module's ZonapropScraper for parsing logic
+        to avoid code duplication and maintain consistency.
+
+        Args:
+            html_content: HTML content as string
+            source: Source URL (for error messages)
+
+        Returns:
+            __PRELOADED_STATE__ dictionary with listing data
+
+        Raises:
+            ScrapingError: If state cannot be extracted
+        """
+        # Import here to avoid circular dependency
+        from .ingestion import ZonapropScraper
+
+        # Create scraper instance to reuse extraction logic
+        scraper = ZonapropScraper(self.config)
+
+        # Delegate to existing proven parsing method
+        return scraper._extract_preloaded_state(html_content, source)
 
     @staticmethod
     def _is_cloudflare_block(html_content: str) -> bool:

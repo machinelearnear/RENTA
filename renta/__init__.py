@@ -89,6 +89,10 @@ from .exceptions import (
     MatchingError,
     AIServiceConfigurationError,
     ExportFormatError,
+    ProviderError,
+    ProviderNotFoundError,
+    ProviderAPIError,
+    ProviderRateLimitError,
 )
 from .ingestion import (
     AirbnbIngester,
@@ -119,6 +123,11 @@ from .security import (
     PIIScrubber,
     ConfigurationSanitizer,
 )
+from .providers import (
+    RealEstateProvider,
+    BaseRealEstateProvider,
+    ProviderRegistry,
+)
 
 # CLI is available but not exported by default
 try:
@@ -137,6 +146,10 @@ __all__ = [
     "MatchingError",
     "AIServiceConfigurationError",
     "ExportFormatError",
+    "ProviderError",
+    "ProviderNotFoundError",
+    "ProviderAPIError",
+    "ProviderRateLimitError",
     "AirbnbIngester",
     "ZonapropScraper",
     "DataProcessor",
@@ -158,6 +171,9 @@ __all__ = [
     "CredentialManager",
     "PIIScrubber",
     "ConfigurationSanitizer",
+    "RealEstateProvider",
+    "BaseRealEstateProvider",
+    "ProviderRegistry",
     "show_legal_notice",
     "get_legal_notice_text",
 ]

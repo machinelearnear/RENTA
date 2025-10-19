@@ -1607,6 +1607,146 @@ class DataProcessor:
                 details={"error_type": type(e).__name__, "rows": len(raw_data)},
             )
 
+    def process_provider_data(self, raw_data: pd.DataFrame, provider_name: str) -> pd.DataFrame:
+        """Process and normalize data from any real estate provider.
+
+        Args:
+            raw_data: Raw DataFrame from provider
+            provider_name: Name of the provider (e.g., 'zonaprop', 'mercadolibre')
+
+        Returns:
+            Cleaned and normalized DataFrame
+
+        Raises:
+            ScrapingError: If processing fails
+        """
+        try:
+            # Delegate to provider-specific processing if available
+            if provider_name == "airbnb":
+                return self.process_airbnb_listings(raw_data)
+            elif provider_name == "zonaprop":
+                return self.process_zonaprop_listings(raw_data)
+            elif provider_name == "mercadolibre":
+                return self._process_mercadolibre_listings(raw_data)
+            else:
+                # Generic processing for unknown providers
+                return self._process_generic_provider_data(raw_data, provider_name)
+
+        except Exception as e:
+            if isinstance(e, (ScrapingError, AirbnbDataError)):
+                raise
+            raise ScrapingError(
+                f"Failed to process {provider_name} data: {e}",
+                details={"provider": provider_name, "error_type": type(e).__name__, "rows": len(raw_data)},
+            )
+
+    def _process_mercadolibre_listings(self, raw_data: pd.DataFrame) -> pd.DataFrame:
+        """Process and normalize MercadoLibre data.
+
+        Args:
+            raw_data: Raw MercadoLibre DataFrame
+
+        Returns:
+            Cleaned and normalized DataFrame
+        """
+        try:
+            df = raw_data.copy()
+
+            # Validate required columns
+            required_columns = ["id", "source"]
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            if missing_columns:
+                raise ScrapingError(
+                    f"Missing required columns in MercadoLibre data: {missing_columns}",
+                    details={
+                        "missing_columns": missing_columns,
+                        "available_columns": list(df.columns),
+                    },
+                )
+
+            # Clean and validate coordinates
+            df = self._clean_coordinates(df)
+
+            # Convert prices to USD (MercadoLibre data should already have both USD and ARS)
+            df = self._convert_provider_prices(df)
+
+            # Clean text fields
+            df = self._clean_text_fields(df)
+
+            # Handle missing values
+            df = self._handle_missing_values(df, "mercadolibre")
+
+            # Validate data quality
+            df = self._validate_provider_data(df, "mercadolibre")
+
+            # Create consistent schema
+            df = self._normalize_provider_schema(df, "mercadolibre")
+
+            return df
+
+        except Exception as e:
+            if isinstance(e, ScrapingError):
+                raise
+            raise ScrapingError(
+                f"Failed to process MercadoLibre data: {e}",
+                details={"error_type": type(e).__name__, "rows": len(raw_data)},
+            )
+
+    def _process_generic_provider_data(self, raw_data: pd.DataFrame, provider_name: str) -> pd.DataFrame:
+        """Process data from unknown providers using generic cleaning.
+
+        Args:
+            raw_data: Raw DataFrame from provider
+            provider_name: Name of the provider
+
+        Returns:
+            Cleaned DataFrame with basic normalization
+        """
+        try:
+            df = raw_data.copy()
+
+            # Validate minimum required columns
+            required_columns = ["id"]
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            if missing_columns:
+                raise ScrapingError(
+                    f"Missing required columns in {provider_name} data: {missing_columns}",
+                    details={
+                        "missing_columns": missing_columns,
+                        "available_columns": list(df.columns),
+                        "provider": provider_name,
+                    },
+                )
+
+            # Clean coordinates if present
+            if "latitude" in df.columns and "longitude" in df.columns:
+                df = self._clean_coordinates(df)
+
+            # Convert prices if present
+            df = self._convert_provider_prices(df)
+
+            # Clean text fields if present
+            df = self._clean_text_fields(df)
+
+            # Handle missing values
+            df = self._handle_missing_values(df, provider_name)
+
+            # Validate data quality
+            df = self._validate_provider_data(df, provider_name)
+
+            # Create consistent schema
+            df = self._normalize_provider_schema(df, provider_name)
+
+            return df
+
+        except Exception as e:
+            if isinstance(e, ScrapingError):
+                raise
+            raise ScrapingError(
+                f"Failed to process {provider_name} data: {e}",
+                details={"error_type": type(e).__name__, "rows": len(raw_data), "provider": provider_name},
+            )
+
     def convert_currency(
         self, amounts: pd.Series, from_currency: str, to_currency: str
     ) -> pd.Series:
@@ -1772,6 +1912,36 @@ class DataProcessor:
 
         return df
 
+    def _convert_provider_prices(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Convert provider prices to ensure both USD and ARS columns exist."""
+        # Handle different price column combinations
+        
+        # If we have price_usd but not price_ars, convert to ARS
+        if "price_usd" in df.columns and "price_ars" not in df.columns:
+            valid_usd = df["price_usd"].notna() & (df["price_usd"] > 0)
+            if valid_usd.any():
+                df["price_ars"] = None
+                df.loc[valid_usd, "price_ars"] = self.convert_currency(
+                    df.loc[valid_usd, "price_usd"], "USD", "ARS"
+                )
+
+        # If we have price_ars but not price_usd, convert to USD
+        if "price_ars" in df.columns and "price_usd" not in df.columns:
+            valid_ars = df["price_ars"].notna() & (df["price_ars"] > 0)
+            if valid_ars.any():
+                df["price_usd"] = None
+                df.loc[valid_ars, "price_usd"] = self.convert_currency(
+                    df.loc[valid_ars, "price_ars"], "ARS", "USD"
+                )
+
+        # Ensure both columns exist even if empty
+        if "price_usd" not in df.columns:
+            df["price_usd"] = None
+        if "price_ars" not in df.columns:
+            df["price_ars"] = None
+
+        return df
+
     def _clean_room_types(self, df: pd.DataFrame) -> pd.DataFrame:
         """Standardize room type values."""
         if "room_type" in df.columns:
@@ -1832,6 +2002,17 @@ class DataProcessor:
             # Keep rows even with missing coordinates (can be geocoded later)
             df = df.dropna(subset=["id"])
 
+        elif data_type == "mercadolibre":
+            # For MercadoLibre, we need at least ID
+            # Keep rows even with missing coordinates (can be geocoded later)
+            df = df.dropna(subset=["id"])
+
+        else:
+            # Generic provider handling
+            # Require at least an ID to identify the property
+            if "id" in df.columns:
+                df = df.dropna(subset=["id"])
+
         return df
 
     def _validate_airbnb_data(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -1874,6 +2055,38 @@ class DataProcessor:
         # Remove duplicate properties
         if "id" in df.columns:
             df = df.drop_duplicates(subset=["id"], keep="first")
+
+        return df
+
+    def _validate_provider_data(self, df: pd.DataFrame, provider_name: str) -> pd.DataFrame:
+        """Validate provider data quality using generic rules."""
+        # Remove invalid prices (negative or extremely high)
+        # Use different thresholds for different currencies
+        if "price_usd" in df.columns:
+            valid_price_usd = (df["price_usd"].isna()) | (
+                (df["price_usd"] > 0) & (df["price_usd"] < 10000000)
+            )
+            df = df[valid_price_usd]
+        
+        if "price_ars" in df.columns:
+            # ARS prices can be much higher due to exchange rate (e.g., 1000 ARS = 1 USD)
+            valid_price_ars = (df["price_ars"].isna()) | (
+                (df["price_ars"] > 0) & (df["price_ars"] < 10000000000)  # 10 billion ARS limit
+            )
+            df = df[valid_price_ars]
+
+        # Remove duplicate properties
+        if "id" in df.columns:
+            df = df.drop_duplicates(subset=["id"], keep="first")
+
+        # Validate coordinates if present
+        if "latitude" in df.columns and "longitude" in df.columns:
+            # Remove properties with invalid coordinates
+            valid_coords = (
+                (df["latitude"].isna() | df["latitude"].between(-90, 90)) & 
+                (df["longitude"].isna() | df["longitude"].between(-180, 180))
+            )
+            df = df[valid_coords]
 
         return df
 
@@ -1957,6 +2170,60 @@ class DataProcessor:
             elif dtype == str:
                 df[col] = df[col].astype(str)
                 df.loc[df[col] == "nan", col] = None
+
+        return df
+
+    def _normalize_provider_schema(self, df: pd.DataFrame, provider_name: str) -> pd.DataFrame:
+        """Create consistent schema for any provider."""
+        # Define unified schema that all providers should conform to
+        unified_schema = {
+            "id": str,
+            "title": str,
+            "price_usd": float,
+            "price_ars": float,
+            "address": str,
+            "latitude": float,
+            "longitude": float,
+            "property_type": str,
+            "operation_type": str,
+            "rooms": float,
+            "bathrooms": float,
+            "surface_m2": float,
+            "listing_url": str,
+            "source": str,
+        }
+
+        # Add provider-specific columns based on provider type
+        if provider_name == "zonaprop":
+            unified_schema["views_per_day"] = float
+        elif provider_name == "mercadolibre":
+            # MercadoLibre might have additional fields in the future
+            pass
+
+        # Ensure all columns exist
+        for col, dtype in unified_schema.items():
+            if col not in df.columns:
+                df[col] = None
+
+        # Set source column if not already set
+        if "source" in df.columns:
+            df.loc[df["source"].isna(), "source"] = provider_name
+        else:
+            df["source"] = provider_name
+
+        # Reorder columns to have unified schema first
+        unified_cols = list(unified_schema.keys())
+        other_cols = [col for col in df.columns if col not in unified_cols]
+        df = df[unified_cols + other_cols]
+
+        # Convert data types
+        for col, dtype in unified_schema.items():
+            if col in df.columns:
+                if dtype == float:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+                elif dtype == str:
+                    df[col] = df[col].astype(str)
+                    df.loc[df[col] == "nan", col] = None
 
         return df
 

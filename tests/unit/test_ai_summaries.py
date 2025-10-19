@@ -56,10 +56,10 @@ class TestAIAnalyzer:
 
     def test_model_configuration(self, mock_config_manager):
         """Test that model configuration is correct."""
-        model_id = mock_config_manager.get("aws.model_id")
+        model_id = mock_config_manager.get("aws.bedrock.model_id")
         region = mock_config_manager.get("aws.region")
-        max_tokens = mock_config_manager.get("aws.max_tokens")
-        temperature = mock_config_manager.get("aws.temperature")
+        max_tokens = mock_config_manager.get("aws.bedrock.max_tokens")
+        temperature = mock_config_manager.get("aws.bedrock.temperature")
 
         # Validate configuration
         assert model_id is not None

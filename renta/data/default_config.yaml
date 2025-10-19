@@ -6,6 +6,31 @@ data:
   export_dir: "~/.renta/exports"
   freshness_threshold_hours: 24
 
+# Real Estate Provider Configuration
+real_estate:
+  default_provider: "zonaprop"  # Default provider to use
+  
+  # Provider-specific settings
+  providers:
+    mercadolibre:
+      rate_limit_seconds: 1.0
+      max_retries: 3
+      timeout_seconds: 30
+      max_results_per_request: 50
+      cache_ttl_hours: 24
+      
+      # Default filters
+      defaults:
+        country: "AR"
+        state: "TUxBUENBUGw3M2E1"  # Capital Federal
+        
+    zonaprop:
+      # Existing zonaprop configuration remains unchanged
+      rate_limit_seconds: 5.0
+      max_retries: 3
+      timeout_seconds: 30
+      cache_ttl_hours: 24
+
 airbnb:
   matching:
     radius_km: 0.3
@@ -20,7 +45,6 @@ airbnb:
 
 zonaprop:
   scraping:
-    use_playwright: true  # Playwright is now the default (more reliable)
     rate_limit_seconds: 5.0
     max_retries: 3
     timeout_seconds: 30
@@ -33,26 +57,6 @@ zonaprop:
       - "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
       - "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
       - "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-  playwright:
-    # Browser settings
-    headless: false  # Headed mode (visible browser) works better with Cloudflare
-    browser_timeout_seconds: 60
-    navigation_timeout_seconds: 60
-    cloudflare_wait_seconds: 10
-    # Pagination
-    page_load_delay_seconds: 3  # Wait after page load for API calls to complete
-    # Retry logic
-    retry_delay_base_seconds: 5
-    # Browser fingerprint
-    viewport:
-      width: 1920
-      height: 1080
-    user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    locale: "es-AR"
-    timezone: "America/Argentina/Buenos_Aires"
-    # Session management
-    reuse_browser_session: true
-    session_max_pages: 50  # Close and reopen browser after N pages
 
 exchange_rates:
   provider: "xe.com"

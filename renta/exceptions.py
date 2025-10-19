@@ -99,6 +99,46 @@ class AIServiceConfigurationError(RentaError):
     pass
 
 
+class ProviderError(RentaError):
+    """Base exception for provider errors.
+
+    Raised when there are issues with real estate data providers,
+    including configuration, API errors, or data processing failures.
+    """
+
+    pass
+
+
+class ProviderNotFoundError(ProviderError):
+    """Raised when requested provider doesn't exist.
+
+    Occurs when trying to use a provider that hasn't been registered
+    or when the provider name is misspelled.
+    """
+
+    pass
+
+
+class ProviderAPIError(ProviderError):
+    """Raised when provider API returns an error.
+
+    Covers HTTP errors, invalid responses, authentication failures,
+    and other API-related issues.
+    """
+
+    pass
+
+
+class ProviderRateLimitError(ProviderAPIError):
+    """Raised when provider rate limit is exceeded.
+
+    Occurs when the provider's API rate limit is hit and requests
+    are being throttled or rejected.
+    """
+
+    pass
+
+
 class ExportFormatError(RentaError):
     """Data export format errors.
 

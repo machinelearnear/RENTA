@@ -30,26 +30,75 @@ def test_config_dict() -> Dict[str, Any]:
     """Minimal test configuration dictionary."""
     return {
         "data": {
-            "cache_dir": tempfile.mkdtemp(),
-            "export_dir": tempfile.mkdtemp(),
+            "cache_dir": tempfile.mkdtemp(prefix="renta_cache_"),
+            "export_dir": tempfile.mkdtemp(prefix="renta_export_"),
             "freshness_threshold_hours": 24,
+        },
+        "real_estate": {
+            "default_provider": "zonaprop",
+            "providers": {
+                "mercadolibre": {
+                    "rate_limit_seconds": 1.0,
+                    "max_retries": 3,
+                    "timeout_seconds": 30,
+                    "max_results_per_request": 50,
+                    "cache_ttl_hours": 24,
+                    "defaults": {
+                        "country": "AR",
+                        "state": "TUxBUENBUGw3M2E1"
+                    }
+                },
+                "zonaprop": {
+                    "rate_limit_seconds": 5.0,
+                    "max_retries": 3,
+                    "timeout_seconds": 30,
+                    "cache_ttl_hours": 24
+                }
+            }
         },
         "airbnb": {
             "matching": {
                 "radius_km": 0.3,
                 "min_nights_threshold": 7,
-                "max_listings_per_property": 10,
+                "min_review_score": 4.0,
+                "occupancy_thresholds": {
+                    "high": 14,
+                    "medium": 7
+                }
+            },
+            "processing": {
+                "remove_outliers": True,
+                "outlier_sigma": 3.0
             }
+        },
+        "zonaprop": {
+            "scraping": {
+                "rate_limit_seconds": 5.0,
+                "max_retries": 3,
+                "timeout_seconds": 30,
+                "user_agents": [
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ]
+            }
+        },
+        "exchange_rates": {
+            "provider": "xe.com",
+            "cache_ttl_hours": 24,
+            "fallback_rate": 1000
         },
         "aws": {
             "region": "us-east-1",
-            "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-            "max_tokens": 1000,
-            "temperature": 0.7,
+            "bedrock": {
+                "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                "max_tokens": 1000,
+                "temperature": 0.7,
+                "max_retries": 3,
+            },
+        },
+        "prompts": {
+            "default": "prompts/investment_summary.yaml"
         },
         "logging": {"level": "ERROR", "format": "json"},  # Suppress logs during tests
-        "security": {"enable_pii_scrubbing": True, "pii_replacement": "[REDACTED]"},
-        "network": {"timeout_seconds": 30, "max_retries": 3, "backoff_factor": 0.3},
     }
 
 

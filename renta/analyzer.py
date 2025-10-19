@@ -34,6 +34,7 @@ from .ai import AIAnalyzer
 from .export import ExportManager
 from .security import SecurityManager
 from .utils.retry import RetryConfig, with_retry
+from .providers import ProviderRegistry
 
 logger = structlog.get_logger(__name__)
 
@@ -357,6 +358,12 @@ class RealEstateAnalyzer:
                     setattr(self, f"_{name}", component)
                     progress.update()
 
+                # Provider configuration
+                self.default_provider = self.config.get(
+                    "real_estate.default_provider", 
+                    "zonaprop"
+                )
+
                 # State management
                 self._airbnb_data: Optional[pd.DataFrame] = None
                 self._last_airbnb_download: Optional[float] = None
@@ -513,6 +520,80 @@ class RealEstateAnalyzer:
                     total_scrapes=self._operation_stats["scrapes"],
                 )
 
+                return processed_properties
+
+    @with_retry()
+    def fetch_properties(
+        self,
+        provider: Optional[str] = None,
+        **filters
+    ) -> pd.DataFrame:
+        """Fetch properties from specified provider.
+        
+        Args:
+            provider: Provider name (zonaprop, mercadolibre, etc.)
+                     If None, uses default from config
+            **filters: Provider-specific filters (location, property_type, 
+                      operation_type, max_results, etc.)
+            
+        Returns:
+            DataFrame with property listings in normalized format
+            
+        Raises:
+            ProviderNotFoundError: If provider is not registered
+            ScrapingError: If data fetching fails
+        """
+        provider_name = provider or self.default_provider
+        
+        with OperationTimer(
+            "property fetching", 
+            self.logger, 
+            provider=provider_name,
+            filters=filters
+        ) as timer:
+            with ErrorContext(
+                "property fetching",
+                self.logger,
+                reraise_as=ScrapingError,
+                provider=provider_name,
+                filters=filters,
+            ):
+                self.logger.info(
+                    "Fetching properties from provider",
+                    provider=provider_name,
+                    filters=filters
+                )
+                
+                # Get provider instance from registry
+                provider_instance = ProviderRegistry.get_provider(
+                    provider_name, 
+                    self.config
+                )
+                
+                # Fetch properties using the provider
+                properties_df = provider_instance.fetch_properties(**filters)
+                
+                # Process the data through DataProcessor for additional cleaning and normalization
+                processed_properties = self._data_processor.process_provider_data(
+                    properties_df, provider_name
+                )
+                
+                # Validate the processed data
+                self._validate_property_data(processed_properties)
+                
+                self._operation_stats["scrapes"] += 1
+                
+                self.logger.info(
+                    "Property fetching completed",
+                    provider=provider_name,
+                    properties=len(processed_properties),
+                    columns=len(processed_properties.columns),
+                    memory_usage_mb=round(
+                        processed_properties.memory_usage(deep=True).sum() / 1024 / 1024, 2
+                    ),
+                    total_fetches=self._operation_stats["scrapes"],
+                )
+                
                 return processed_properties
 
     def enrich_with_airbnb(self, properties_df: pd.DataFrame) -> pd.DataFrame:
@@ -744,6 +825,18 @@ class RealEstateAnalyzer:
         """
         return self.scrape_zonaprop(search_url, html_path=html_path, auto_download=auto_download)
 
+    def with_provider_properties(self, provider: Optional[str] = None, **filters) -> pd.DataFrame:
+        """Fetch properties using provider system and return DataFrame for chaining.
+
+        Args:
+            provider: Provider name (zonaprop, mercadolibre, etc.)
+            **filters: Provider-specific filters
+
+        Returns:
+            Properties DataFrame
+        """
+        return self.fetch_properties(provider=provider, **filters)
+
     # State management and utility methods
     def get_config(self) -> ConfigManager:
         """Get configuration manager instance.
@@ -775,6 +868,8 @@ class RealEstateAnalyzer:
         """
         return {
             "config_loaded": self.config is not None,
+            "default_provider": self.default_provider,
+            "available_providers": ProviderRegistry.list_providers(),
             "airbnb_data_cached": self._airbnb_data is not None,
             "airbnb_data_rows": len(self._airbnb_data) if self._airbnb_data is not None else 0,
             "airbnb_data_memory_mb": round(
@@ -873,28 +968,20 @@ class RealEstateAnalyzer:
         Raises:
             ScrapingError: If scraping fails after all retries
         """
-        use_playwright = self.config.get("zonaprop.scraping.use_playwright", False)
+        # Use cloudscraper for Zonaprop scraping
+        # NOTE: Zonaprop has strong Cloudflare protection - this may not work reliably
+        # Recommended alternative: Use MercadoLibre provider instead (provider="mercadolibre")
+        self.logger.info("Using cloudscraper for Zonaprop", url=search_url)
+        self.logger.warning(
+            "Zonaprop scraping is unreliable due to Cloudflare. "
+            "Consider using MercadoLibre provider: analyzer.fetch_properties(provider='mercadolibre', ...)"
+        )
 
-        if use_playwright:
-            # Use Playwright-based scraper (more reliable, bypasses Cloudflare)
-            from .utils.async_scraper_wrapper import scrape_zonaprop_sync
+        @with_retry(self.retry_config, logger_instance=self.logger)
+        def _scrape():
+            return self._zonaprop_scraper.scrape_search_results(search_url)
 
-            self.logger.info("Using Playwright scraper for Cloudflare bypass", url=search_url)
-
-            @with_retry(self.retry_config, logger_instance=self.logger)
-            def _scrape():
-                return scrape_zonaprop_sync(search_url, self.config)
-
-            return _scrape()
-        else:
-            # Use legacy cloudscraper (faster but often blocked)
-            self.logger.info("Using cloudscraper (legacy method)", url=search_url)
-
-            @with_retry(self.retry_config, logger_instance=self.logger)
-            def _scrape():
-                return self._zonaprop_scraper.scrape_search_results(search_url)
-
-            return _scrape()
+        return _scrape()
 
     def _validate_airbnb_data(self, data: pd.DataFrame) -> None:
         """Validate Airbnb data integrity.
